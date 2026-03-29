@@ -5,13 +5,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from explorer_skill import ExplorerSkillConfig
-from explorer_skill.graph_client import GraphClient
-from explorer_skill.token_manager import TokenManager
-from ipc_skill import IPCExplorer
+from ipc_skill import IPCExplorer, IPCSkillConfig
+from ipc_skill.graph_client import GraphClient
+from ipc_skill.token_manager import TokenManager
 
 
-def _make_ipc(config: ExplorerSkillConfig) -> tuple[IPCExplorer, MagicMock]:
+def _make_ipc(config: IPCSkillConfig) -> tuple[IPCExplorer, MagicMock]:
     mock_tm = MagicMock(spec=TokenManager)
     mock_graph = MagicMock(spec=GraphClient)
     ipc = IPCExplorer(config, token_manager=mock_tm, graph_client=mock_graph)
@@ -19,7 +18,7 @@ def _make_ipc(config: ExplorerSkillConfig) -> tuple[IPCExplorer, MagicMock]:
 
 
 class TestListManagedDevices:
-    def test_returns_all_devices_single_page(self, config: ExplorerSkillConfig):
+    def test_returns_all_devices_single_page(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         devices = [{"id": "d1"}, {"id": "d2"}]
         mock_graph.get.return_value = {"value": devices}
@@ -28,7 +27,7 @@ class TestListManagedDevices:
 
         assert result == devices
 
-    def test_paginates_using_next_link(self, config: ExplorerSkillConfig):
+    def test_paginates_using_next_link(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         page1 = {
             "value": [{"id": "d1"}],
@@ -42,7 +41,7 @@ class TestListManagedDevices:
         assert len(result) == 2
         assert mock_graph.get.call_count == 2
 
-    def test_applies_filter_and_select(self, config: ExplorerSkillConfig):
+    def test_applies_filter_and_select(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {"value": []}
 
@@ -58,7 +57,7 @@ class TestListManagedDevices:
 
 
 class TestGetManagedDevice:
-    def test_calls_correct_endpoint(self, config: ExplorerSkillConfig):
+    def test_calls_correct_endpoint(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {"id": "device-123", "deviceName": "LAPTOP-01"}
 
@@ -69,7 +68,7 @@ class TestGetManagedDevice:
 
 
 class TestListDeviceInventoryCategories:
-    def test_returns_categories(self, config: ExplorerSkillConfig):
+    def test_returns_categories(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {"value": [{"id": "hardware"}, {"id": "software"}]}
 
@@ -81,7 +80,7 @@ class TestListDeviceInventoryCategories:
         assert len(result) == 2
         assert result[0]["id"] == "hardware"
 
-    def test_returns_empty_list_when_no_categories(self, config: ExplorerSkillConfig):
+    def test_returns_empty_list_when_no_categories(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {"value": []}
 
@@ -89,7 +88,7 @@ class TestListDeviceInventoryCategories:
 
         assert result == []
 
-    def test_returns_empty_list_when_response_is_none(self, config: ExplorerSkillConfig):
+    def test_returns_empty_list_when_response_is_none(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = None
 
@@ -99,7 +98,7 @@ class TestListDeviceInventoryCategories:
 
 
 class TestGetDeviceInventory:
-    def test_calls_correct_endpoint_with_expand(self, config: ExplorerSkillConfig):
+    def test_calls_correct_endpoint_with_expand(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {"id": "hardware", "instances": []}
 
@@ -110,7 +109,7 @@ class TestGetDeviceInventory:
         assert "$expand" in call_kwargs.get("params", {})
         assert result["id"] == "hardware"
 
-    def test_returns_empty_dict_when_response_is_none(self, config: ExplorerSkillConfig):
+    def test_returns_empty_dict_when_response_is_none(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = None
 
@@ -118,7 +117,7 @@ class TestGetDeviceInventory:
 
         assert result == {}
 
-    def test_returns_instances(self, config: ExplorerSkillConfig):
+    def test_returns_instances(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {
             "id": "software",

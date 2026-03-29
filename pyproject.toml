@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "explorer-skill @ git+https://github.com/schenardie/IntuneExplorerSkill.git",
+    "cryptography>=41.0.0",
+    "keyring>=24.0.0",
+    "requests>=2.31.0",
+    "msal>=1.28.0",
 ]
 
 [project.scripts]

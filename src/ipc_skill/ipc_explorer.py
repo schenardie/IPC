@@ -12,9 +12,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from explorer_skill import ExplorerSkillConfig
-from explorer_skill.graph_client import GraphClient
-from explorer_skill.token_manager import TokenManager
+from .config import IPCSkillConfig
+from .graph_client import GraphClient
+from .token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class IPCExplorer:
 
     def __init__(
         self,
-        config: ExplorerSkillConfig,
+        config: IPCSkillConfig,
         token_manager: Optional[TokenManager] = None,
         graph_client: Optional[GraphClient] = None,
     ) -> None:

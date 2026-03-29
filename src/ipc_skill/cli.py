@@ -62,13 +62,12 @@ def _masked_input(prompt: str) -> str:
     return "".join(chars)
 
 
-from explorer_skill import ExplorerSkillConfig
-from explorer_skill.token_manager import TokenExpiredError
-from ipc_skill import IPCExplorer
+from ipc_skill import IPCSkillConfig, IPCExplorer
+from ipc_skill.token_manager import TokenExpiredError
 
 
-def _build_config() -> ExplorerSkillConfig:
-    return ExplorerSkillConfig()
+def _build_config() -> IPCSkillConfig:
+    return IPCSkillConfig()
 
 
 def _print_json(data: object) -> None:
@@ -239,7 +238,7 @@ def main() -> None:
                             inv["_category"] = category
                             all_results.append(inv)
                         except Exception as exc:
-                            from explorer_skill.graph_client import GraphAPIError
+                            from ipc_skill.graph_client import GraphAPIError
                             if isinstance(exc, GraphAPIError) and exc.status_code == 404:
                                 print(f"[warn] {device_name}/{category}: not available on this device (skipped)")
                             else:
