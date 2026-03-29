@@ -10,6 +10,7 @@ so logging in once with either skill grants access to both.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from .config import IPCSkillConfig
@@ -18,10 +19,22 @@ from .token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
-_INVENTORY_EXPAND = (
-    "instances($select=id,displayName,values;"
-    "$expand=values($select=id,displayName,value))"
-)
+_INVENTORY_EXPAND = "instances"
+
+
+def _camel_to_title(name: str) -> str:
+    """Convert camelCase/PascalCase to Title Case: 'cycleCount' → 'Cycle Count'."""
+    spaced = re.sub(r"(?<=[a-z0-9])([A-Z])", r" \1", name)
+    return spaced.title()
+
+
+def _clean_instance(instance: dict) -> dict:
+    """Strip OData metadata and convert camelCase keys to friendly Title Case names."""
+    return {
+        (_camel_to_title(k) if k != "id" else "Instance Name"): v
+        for k, v in instance.items()
+        if not k.startswith("@")
+    }
 
 
 class IPCExplorer:
@@ -106,23 +119,30 @@ class IPCExplorer:
         )
         return response.get("value", []) if response else []
 
-    def get_device_inventory(self, device_id: str, category: str) -> dict:
-        """Return the full inventory data for a device and category.
+    def get_device_inventory(self, device_id: str, category: str) -> list[dict]:
+        """Return cleaned inventory instances for a device and category.
+
+        Each instance is a dict with friendly Title Case keys matching the
+        column names shown in the Intune admin center. OData metadata fields
+        are stripped automatically.
 
         Parameters
         ----------
         device_id:
             The Intune managed device GUID.
         category:
-            Inventory category ID (e.g. ``"hardware"``, ``"software"``).
+            Inventory category ID (e.g. ``"battery"``, ``"diskDrive"``).
 
         Returns
         -------
-        dict
-            Inventory payload including ``instances`` with their ``values``.
+        list[dict]
+            One dict per instance, keys are friendly names like
+            ``"Cycle Count"``, ``"Designed Capacity"``, etc.
         """
         response = self._graph.get(
             f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{category}')",
             params={"$expand": _INVENTORY_EXPAND},
         )
-        return response or {}
+        if not response:
+            return []
+        return [_clean_instance(inst) for inst in response.get("instances", [])]

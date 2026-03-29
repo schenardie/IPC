@@ -1,0 +1,2 @@
+[console_scripts]
+ipc-skill = ipc_skill.cli:main

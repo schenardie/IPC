@@ -1,0 +1,18 @@
+Metadata-Version: 2.4
+Name: ipc-skill
+Version: 0.1.0
+Summary: Intune device inventory skill — lists hardware/software inventory for managed devices
+License-Expression: MIT
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: cryptography>=41.0.0
+Requires-Dist: keyring>=24.0.0
+Requires-Dist: requests>=2.31.0
+Requires-Dist: msal>=1.28.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=5.0.0; extra == "dev"
+Requires-Dist: pytest-mock>=3.14.0; extra == "dev"
+
+# IPCSkill
+Intune Properties Catalog Skill

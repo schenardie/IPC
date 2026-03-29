@@ -107,24 +107,50 @@ class TestGetDeviceInventory:
         call_args, call_kwargs = mock_graph.get.call_args
         assert call_args[0] == "/deviceManagement/managedDevices('device-123')/deviceInventories('hardware')"
         assert "$expand" in call_kwargs.get("params", {})
-        assert result["id"] == "hardware"
+        assert result == []
 
-    def test_returns_empty_dict_when_response_is_none(self, config: IPCSkillConfig):
+    def test_returns_empty_list_when_response_is_none(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = None
 
         result = ipc.get_device_inventory("device-123", "hardware")
 
-        assert result == {}
+        assert result == []
 
-    def test_returns_instances(self, config: IPCSkillConfig):
+    def test_returns_cleaned_instances(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {
-            "id": "software",
-            "instances": [{"id": "app1", "displayName": "My App", "values": []}],
+            "id": "battery",
+            "instances": [
+                {
+                    "id": "{BFD21D0B}\\SurfaceBattery",
+                    "cycleCount": 256,
+                    "designedCapacity": 47700,
+                    "manufacturer": "DYN",
+                    "@odata.type": "#microsoft.graph.battery",
+                }
+            ],
         }
 
-        result = ipc.get_device_inventory("device-123", "software")
+        result = ipc.get_device_inventory("device-123", "battery")
 
-        assert len(result["instances"]) == 1
-        assert result["instances"][0]["displayName"] == "My App"
+        assert len(result) == 1
+        instance = result[0]
+        assert instance["Instance Name"] == "{BFD21D0B}\\SurfaceBattery"
+        assert instance["Cycle Count"] == 256
+        assert instance["Designed Capacity"] == 47700
+        assert instance["Manufacturer"] == "DYN"
+        assert "@odata.type" not in instance
+
+    def test_strips_odata_fields(self, config: IPCSkillConfig):
+        ipc, mock_graph = _make_ipc(config)
+        mock_graph.get.return_value = {
+            "@odata.context": "https://graph.microsoft.com/...",
+            "instances": [{"id": "inst1", "@odata.type": "noise", "diskName": "C:"}],
+        }
+
+        result = ipc.get_device_inventory("device-123", "diskDrive")
+
+        assert "@odata.context" not in result[0]
+        assert "@odata.type" not in result[0]
+        assert result[0]["Disk Name"] == "C:"

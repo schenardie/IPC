@@ -226,17 +226,16 @@ def main() -> None:
                         print("[warn] No valid categories selected.")
                         continue
 
-                all_results = []
+                grouped: dict = {}
                 for device in devices:
                     device_id = device.get("id") or device.get("deviceId", "")
                     device_name = device.get("deviceName", device_id)
+                    grouped[device_name] = {}
                     for category in selected_cats:
                         print(f"[info] Fetching {category} for {device_name}...")
                         try:
-                            inv = ipc.get_device_inventory(device_id, category)
-                            inv["_deviceName"] = device_name
-                            inv["_category"] = category
-                            all_results.append(inv)
+                            instances = ipc.get_device_inventory(device_id, category)
+                            grouped[device_name][category] = instances
                         except Exception as exc:
                             from ipc_skill.graph_client import GraphAPIError
                             if isinstance(exc, GraphAPIError) and exc.status_code == 404:
@@ -244,7 +243,17 @@ def main() -> None:
                             else:
                                 print(f"[error] {device_name}/{category}: {exc}")
 
-                _show_results(all_results if len(all_results) != 1 else all_results[0], "inventory")
+                # Unwrap single-device output for cleaner JSON
+                output = grouped if len(grouped) > 1 else next(iter(grouped.values()), {})
+                total = sum(len(v) for v in output.values() if isinstance(v, list))
+                print(f"[ok] {len(grouped)} device(s), {total} total instance(s).")
+                _print_json(output)
+                copy = input("Copy JSON to clipboard? [y/N]: ").strip().lower()
+                if copy == "y":
+                    if _copy_to_clipboard(json.dumps(output, indent=2, default=str)):
+                        print("[ok] Copied to clipboard.")
+                    else:
+                        print("[warn] Could not access clipboard — install xclip on Linux.")
 
             else:
                 print("[?] Unknown option.")
