@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ipc-skill"
+version = "0.1.0"
+description = "Intune device inventory skill — lists hardware/software inventory for managed devices"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "explorer-skill @ git+https://github.com/schenardie/IntuneExplorerSkill.git",
+]
+
+[project.scripts]
+ipc-skill = "ipc_skill.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
+
+[tool.coverage.run]
+source = ["src/ipc_skill"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
