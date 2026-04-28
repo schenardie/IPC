@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import logging
 import re
+from urllib.parse import quote
 from typing import Optional
 
 from .config import IPCSkillConfig
 from .graph_client import GraphClient
+from .graph_client import GraphAPIError
 from .token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
 _INVENTORY_EXPAND = "instances"
+_INVENTORY_EXPAND_WITH_PROPERTIES = "instances($expand=Microsoft.Graph.deviceInventorySimpleItem/properties)"
 
 
 def _camel_to_title(name: str) -> str:
@@ -30,11 +33,57 @@ def _camel_to_title(name: str) -> str:
 
 def _clean_instance(instance: dict) -> dict:
     """Strip OData metadata and convert camelCase keys to friendly Title Case names."""
-    return {
-        (_camel_to_title(k) if k != "id" else "Instance Name"): v
-        for k, v in instance.items()
-        if not k.startswith("@")
-    }
+    cleaned: dict = {}
+
+    for k, v in instance.items():
+        if k.startswith("@"):
+            continue
+
+        if k == "properties" and isinstance(v, list):
+            for prop in v:
+                if not isinstance(prop, dict):
+                    continue
+                prop_name = (
+                    prop.get("displayName")
+                    or prop.get("name")
+                    or prop.get("propertyName")
+                    or prop.get("id")
+                )
+                prop_value = (
+                    prop.get("value")
+                    if "value" in prop
+                    else prop.get("propertyValue")
+                )
+                if prop_name:
+                    cleaned.setdefault(_camel_to_title(str(prop_name)), prop_value)
+            continue
+
+        cleaned[_camel_to_title(k) if k != "id" else "Instance Name"] = v
+
+    # Some inventory rows come back as a compact single "id" string with
+    # semicolon-delimited key=value pairs (for example from simple item types).
+    parsed = _parse_embedded_fields(cleaned.get("Instance Name", ""))
+    for key, value in parsed.items():
+        cleaned.setdefault(key, value)
+
+    return cleaned
+
+
+def _parse_embedded_fields(instance_name: str) -> dict:
+    """Parse key=value pairs embedded in a simple instance id string."""
+    if not isinstance(instance_name, str) or "=" not in instance_name:
+        return {}
+
+    parsed: dict = {}
+    for part in instance_name.split(";"):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip()
+        if not key:
+            continue
+        parsed[_camel_to_title(key)] = value.strip()
+    return parsed
 
 
 class IPCExplorer:
@@ -139,10 +188,65 @@ class IPCExplorer:
             One dict per instance, keys are friendly names like
             ``"Cycle Count"``, ``"Designed Capacity"``, etc.
         """
-        response = self._graph.get(
-            f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{category}')",
-            params={"$expand": _INVENTORY_EXPAND},
-        )
-        if not response:
+        instances = self._get_inventory_instances(device_id, category)
+
+        hydrated: list[dict] = []
+        for inst in instances:
+            hydrated.append(self._hydrate_simple_instance(device_id, category, inst))
+
+        return [_clean_instance(inst) for inst in hydrated]
+
+    def _get_inventory_instances(self, device_id: str, category: str) -> list[dict]:
+        """Fetch inventory instances, preferring the direct instances endpoint."""
+        try:
+            response = self._graph.get(
+                f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{category}')/instances"
+            )
+            if response and isinstance(response, dict) and isinstance(response.get("value"), list):
+                return response.get("value", [])
+        except GraphAPIError as exc:
+            # Some tenants reject this route for deviceInventories; fall back to
+            # the parent endpoint with nested instance expansion.
+            if exc.status_code not in (400, 404):
+                raise
+
+        # Fallback for tenants where only parent + $expand is available.
+        try:
+            fallback = self._graph.get(
+                f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{category}')",
+                params={"$expand": _INVENTORY_EXPAND_WITH_PROPERTIES},
+            )
+        except GraphAPIError:
+            fallback = self._graph.get(
+                f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{category}')",
+                params={"$expand": _INVENTORY_EXPAND},
+            )
+        if not fallback:
             return []
-        return [_clean_instance(inst) for inst in response.get("instances", [])]
+        return fallback.get("instances", [])
+
+    def _hydrate_simple_instance(self, device_id: str, category: str, instance: dict) -> dict:
+        """Try to expand id-only rows by querying the per-instance endpoint."""
+        non_meta_keys = [k for k in instance.keys() if not k.startswith("@")]
+        if non_meta_keys != ["id"]:
+            return instance
+
+        instance_id = instance.get("id")
+        if not isinstance(instance_id, str) or not instance_id:
+            return instance
+
+        try:
+            detail = self._graph.get(
+                f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{category}')/instances('{quote(instance_id, safe='')}')"
+            )
+            if (
+                isinstance(detail, dict)
+                and "id" in detail
+                and any(not k.startswith("@") and k != "id" for k in detail.keys())
+            ):
+                return detail
+        except GraphAPIError:
+            # Some categories only support list-level instances.
+            pass
+
+        return instance

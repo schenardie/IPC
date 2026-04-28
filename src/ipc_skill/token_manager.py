@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -19,6 +20,29 @@ from .keyring_token_store import KeyringTokenStore
 from .local_token_store import LocalTokenStore
 
 logger = logging.getLogger(__name__)
+
+
+_JWT_PATTERN = re.compile(r"([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)")
+
+
+def _normalize_access_token(raw_token: str) -> str:
+    """Normalize user-pasted token input to the raw JWT access token."""
+    token = (raw_token or "").strip()
+
+    if token.lower().startswith("authorization:"):
+        token = token.split(":", 1)[1].strip()
+
+    while len(token) >= 2 and token[0] == token[-1] and token[0] in ('"', "'"):
+        token = token[1:-1].strip()
+
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+
+    match = _JWT_PATTERN.search(token)
+    if match:
+        return match.group(1)
+
+    return token
 
 
 def _decode_jwt_payload(token: str) -> dict:
@@ -83,6 +107,8 @@ class TokenManager:
             Ignored when the token contains a valid ``exp`` claim (always true
             for Azure AD tokens).
         """
+        access_token = _normalize_access_token(access_token)
+
         jwt_exp = _extract_expiry_from_jwt(access_token)
         if jwt_exp is not None:
             expiry_ts = jwt_exp
@@ -133,6 +159,7 @@ class TokenManager:
             If no token has been stored yet.
         """
         access_token, metadata = self._load_token()
+        access_token = _normalize_access_token(access_token)
 
         expires_at = metadata.get("expires_at", 0)
         now = datetime.now(tz=timezone.utc).timestamp()

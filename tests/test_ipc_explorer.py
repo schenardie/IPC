@@ -7,6 +7,7 @@ import pytest
 
 from ipc_skill import IPCExplorer, IPCSkillConfig
 from ipc_skill.graph_client import GraphClient
+from ipc_skill.graph_client import GraphAPIError
 from ipc_skill.token_manager import TokenManager
 
 
@@ -100,18 +101,18 @@ class TestListDeviceInventoryCategories:
 class TestGetDeviceInventory:
     def test_calls_correct_endpoint_with_expand(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
-        mock_graph.get.return_value = {"id": "hardware", "instances": []}
+        mock_graph.get.return_value = {"value": []}
 
         result = ipc.get_device_inventory("device-123", "hardware")
 
         call_args, call_kwargs = mock_graph.get.call_args
-        assert call_args[0] == "/deviceManagement/managedDevices('device-123')/deviceInventories('hardware')"
-        assert "$expand" in call_kwargs.get("params", {})
+        assert call_args[0] == "/deviceManagement/managedDevices('device-123')/deviceInventories('hardware')/instances"
+        assert call_kwargs == {}
         assert result == []
 
     def test_returns_empty_list_when_response_is_none(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
-        mock_graph.get.return_value = None
+        mock_graph.get.side_effect = [None, None]
 
         result = ipc.get_device_inventory("device-123", "hardware")
 
@@ -120,8 +121,7 @@ class TestGetDeviceInventory:
     def test_returns_cleaned_instances(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {
-            "id": "battery",
-            "instances": [
+            "value": [
                 {
                     "id": "{BFD21D0B}\\SurfaceBattery",
                     "cycleCount": 256,
@@ -145,8 +145,7 @@ class TestGetDeviceInventory:
     def test_strips_odata_fields(self, config: IPCSkillConfig):
         ipc, mock_graph = _make_ipc(config)
         mock_graph.get.return_value = {
-            "@odata.context": "https://graph.microsoft.com/...",
-            "instances": [{"id": "inst1", "@odata.type": "noise", "diskName": "C:"}],
+            "value": [{"id": "inst1", "@odata.type": "noise", "diskName": "C:"}],
         }
 
         result = ipc.get_device_inventory("device-123", "diskDrive")
@@ -154,3 +153,46 @@ class TestGetDeviceInventory:
         assert "@odata.context" not in result[0]
         assert "@odata.type" not in result[0]
         assert result[0]["Disk Name"] == "C:"
+
+    def test_parses_key_value_pairs_embedded_in_instance_name(self, config: IPCSkillConfig):
+        ipc, mock_graph = _make_ipc(config)
+        mock_graph.get.return_value = {
+            "value": [
+                {
+                    "id": "PhysicalProcessorCount=1;ComputerName=CPC-jose-CIWHG6;HardwareModel=Virtual Machine",
+                    "@odata.type": "#microsoft.graph.deviceInventorySimpleItem",
+                }
+            ]
+        }
+
+        result = ipc.get_device_inventory("device-123", "SystemInfo")
+
+        assert result[0]["Physical Processor Count"] == "1"
+        assert result[0]["Computer Name"] == "CPC-jose-CIWHG6"
+        assert result[0]["Hardware Model"] == "Virtual Machine"
+
+    def test_falls_back_when_direct_instances_route_returns_400(self, config: IPCSkillConfig):
+        ipc, mock_graph = _make_ipc(config)
+        mock_graph.get.side_effect = [
+            GraphAPIError(400, "No route", "No method match route template"),
+            {
+                "id": "SystemInfo",
+                "instances": [
+                    {
+                        "id": "PhysicalProcessorCount=1;ComputerName=CPC-jose-CIWHG6",
+                    }
+                ],
+            },
+            GraphAPIError(400, "No route", "No method match route template"),
+        ]
+
+        result = ipc.get_device_inventory("device-123", "SystemInfo")
+
+        assert result[0]["Physical Processor Count"] == "1"
+        assert result[0]["Computer Name"] == "CPC-jose-CIWHG6"
+
+        first_call_args, _ = mock_graph.get.call_args_list[0]
+        second_call_args, second_call_kwargs = mock_graph.get.call_args_list[1]
+        assert first_call_args[0].endswith("/deviceInventories('SystemInfo')/instances")
+        assert second_call_args[0].endswith("/deviceInventories('SystemInfo')")
+        assert "$expand" in second_call_kwargs["params"]
