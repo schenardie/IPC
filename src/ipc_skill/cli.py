@@ -197,13 +197,13 @@ def main() -> None:
                 print("[info] How to get it:")
                 print("[info]   1. Open https://intune.microsoft.com in your browser and sign in.")
                 print("[info]   2. Open DevTools → Network tab, filter by 'DelegationToken'.")
-                print("[info]   3. Click any POST result → Response body.")
-                print("[info]   4. Copy the value of the 'portalAuthorization' field.")
+                print("[info]   3. Navigate to any Intune section to trigger the call.")
+                print("[info]   4. Click the POST request → Response tab.")
+                print("[info]   5. Copy the value of the 'portalAuthorization' field.")
                 print()
                 portal_auth = _masked_input("Paste portalAuthorization (hidden): ").strip()
                 print(f"  [received {len(portal_auth)} characters]")
 
-                # Try to get tenant from existing stored token first
                 existing = ipc.token_manager.token_info()
                 if existing and existing.get("tenant") and existing["tenant"] != "unknown":
                     tenant_id = existing["tenant"]
