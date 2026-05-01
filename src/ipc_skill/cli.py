@@ -63,7 +63,7 @@ def _masked_input(prompt: str) -> str:
 
 
 from ipc_skill import IPCSkillConfig, IPCExplorer
-from ipc_skill.token_manager import TokenExpiredError
+from ipc_skill.token_manager import TokenExpiredError, TokenRefreshError
 
 
 def _build_config() -> IPCSkillConfig:
@@ -151,7 +151,8 @@ MENU = """
 ╔══════════════════════════════════════════╗
 ║         IPCSkill – Device Inventory      ║
 ╠══════════════════════════════════════════╣
-║  1  Store a bearer token (paste)         ║
+║  1a Store a bearer token (manual paste)  ║
+║  1b Store portalAuth (auto-refresh)      ║
 ║  2  Get device inventory                 ║
 ║  3  Get software inventory               ║
 ║  q  Quit                                 ║
@@ -162,13 +163,15 @@ MENU = """
 def _print_token_status(ipc: IPCExplorer) -> None:
     info = ipc.token_manager.token_info()
     if not info:
-        print("  ⚠  No token stored — use option 1 to paste a token.\n")
+        print("  ⚠  No token stored — use option 1a or 1b to authenticate.\n")
         return
     status = "⚠  EXPIRED" if info["expired"] else "✔  Valid"
-    print(f"  Token : {status}")
-    print(f"  User  : {info['user']}")
-    print(f"  Tenant: {info['tenant']}")
-    print(f"  Expiry: {info['expires_at']} ({info['expires_in']})\n")
+    auto = "✔  enabled (portalAuth stored)" if info.get("auto_refresh") else "⚠  disabled (manual paste only)"
+    print(f"  Token       : {status}")
+    print(f"  User        : {info['user']}")
+    print(f"  Tenant      : {info['tenant']}")
+    print(f"  Expiry      : {info['expires_at']} ({info['expires_in']})")
+    print(f"  Auto-refresh: {auto}\n")
 
 
 def main() -> None:
@@ -183,11 +186,34 @@ def main() -> None:
             if choice == "q":
                 break
 
-            elif choice == "1":
+            elif choice == "1a":
                 token = _masked_input("Paste bearer token (hidden): ").strip()
                 print(f"  [received {len(token)} characters — {'✓ looks like a JWT' if token.startswith('eyJ') else '⚠ unexpected format'}]")
                 ipc.token_manager.store_token(access_token=token)
                 print("[ok] Token stored.")
+
+            elif choice == "1b":
+                print("[info] portalAuthorization enables automatic token refresh.")
+                print("[info] How to get it:")
+                print("[info]   1. Open https://intune.microsoft.com in your browser and sign in.")
+                print("[info]   2. Open DevTools → Network tab, filter by 'DelegationToken'.")
+                print("[info]   3. Click any POST result → Response body.")
+                print("[info]   4. Copy the value of the 'portalAuthorization' field.")
+                print()
+                portal_auth = _masked_input("Paste portalAuthorization (hidden): ").strip()
+                print(f"  [received {len(portal_auth)} characters]")
+
+                # Try to get tenant from existing stored token first
+                existing = ipc.token_manager.token_info()
+                if existing and existing.get("tenant") and existing["tenant"] != "unknown":
+                    tenant_id = existing["tenant"]
+                    print(f"  [using existing tenant: {tenant_id}]")
+                else:
+                    tenant_id = input("Tenant ID (GUID): ").strip()
+
+                print("[info] Validating portalAuthorization via DelegationToken...")
+                ipc.token_manager.store_portal_auth(portal_auth, tenant_id)
+                print("[ok] portalAuthorization stored. Tokens will refresh automatically.")
 
             elif choice == "2":
                 devices = _pick_devices(ipc)
@@ -314,11 +340,14 @@ def main() -> None:
                 print("[?] Unknown option.")
 
         except TokenExpiredError:
-            print("[error] Your token has expired.")
-            print("[info]  Go to https://intune.microsoft.com, open browser DevTools,")
-            print("[info]  copy a fresh Bearer token, then use option 1 to store it.")
+            print("[error] Your token has expired and no portalAuthorization is stored.")
+            print("[info]  Use option 1b to store a portalAuthorization for automatic refresh,")
+            print("[info]  or option 1a to paste a fresh Bearer token manually.")
+        except TokenRefreshError as exc:
+            print(f"[error] Auto-refresh failed: {exc}")
+            print("[info]  Re-paste a portalAuthorization via option 1b.")
         except FileNotFoundError:
-            print("[error] No token stored yet — use option 1 to paste a token.")
+            print("[error] No token stored yet — use option 1a or 1b to authenticate.")
         except Exception as exc:
             print(f"[error] {exc}")
 
