@@ -228,21 +228,36 @@ def main() -> None:
                         continue
 
                 grouped: dict = {}
-                for device in devices:
-                    device_id = device.get("id") or device.get("deviceId", "")
-                    device_name = device.get("deviceName", device_id)
-                    grouped[device_name] = {}
-                    for category in selected_cats:
-                        print(f"[info] Fetching {category} for {device_name}...")
-                        try:
-                            instances = ipc.get_device_inventory(device_id, category)
-                            grouped[device_name][category] = instances
-                        except Exception as exc:
-                            from ipc_skill.graph_client import GraphAPIError
-                            if isinstance(exc, GraphAPIError) and exc.status_code == 404:
-                                print(f"[warn] {device_name}/{category}: not available on this device (skipped)")
-                            else:
-                                print(f"[error] {device_name}/{category}: {exc}")
+                device_id_to_name = {
+                    (d.get("id") or d.get("deviceId", "")): d.get("deviceName", d.get("id", ""))
+                    for d in devices
+                }
+                device_ids = list(device_id_to_name.keys())
+                total_reqs = len(device_ids) * len(selected_cats)
+                total_chunks = (total_reqs + 19) // 20
+                print(f"[info] Batching {total_reqs} request(s) in {total_chunks} Graph batch call(s)...")
+
+                def _inv_progress(done: int, total: int) -> None:
+                    print(f"\r  {done}/{total} requests complete...", end="", flush=True)
+
+                try:
+                    batch_result = ipc.get_inventory_batch(
+                        device_ids, selected_cats, on_chunk=_inv_progress
+                    )
+                    print()  # end progress line
+                except Exception as exc:
+                    print(f"\n[error] Batch failed: {exc}")
+                    continue
+
+                for device_id, cats_data in batch_result.items():
+                    device_name = device_id_to_name.get(device_id, device_id)
+                    grouped[device_name] = cats_data
+
+                for device_id, device_name in device_id_to_name.items():
+                    device_cats = batch_result.get(device_id, {})
+                    for cat in selected_cats:
+                        if cat not in device_cats:
+                            print(f"[warn] {device_name}/{cat}: not available (skipped)")
 
                 # Unwrap single-device output for cleaner JSON
                 output = grouped if len(grouped) > 1 else next(iter(grouped.values()), {})
@@ -262,19 +277,33 @@ def main() -> None:
                     continue
 
                 all_apps: dict = {}
-                for device in devices:
-                    device_id = device.get("id") or device.get("deviceId", "")
-                    device_name = device.get("deviceName", device_id)
-                    print(f"[info] Fetching software inventory for {device_name}...")
-                    try:
-                        apps = ipc.get_software_inventory(device_id)
-                        all_apps[device_name] = apps
-                    except Exception as exc:
-                        from ipc_skill.graph_client import GraphAPIError
-                        if isinstance(exc, GraphAPIError) and exc.status_code == 404:
-                            print(f"[warn] {device_name}: software inventory not available (skipped)")
-                        else:
-                            print(f"[error] {device_name}: {exc}")
+                device_id_to_name = {
+                    (d.get("id") or d.get("deviceId", "")): d.get("deviceName", d.get("id", ""))
+                    for d in devices
+                }
+                device_ids = list(device_id_to_name.keys())
+                total_chunks = (len(device_ids) + 19) // 20
+                print(f"[info] Batching {len(device_ids)} request(s) in {total_chunks} Graph batch call(s)...")
+
+                def _sw_progress(done: int, total: int) -> None:
+                    print(f"\r  {done}/{total} requests complete...", end="", flush=True)
+
+                try:
+                    batch_result = ipc.get_software_inventory_batch(
+                        device_ids, on_chunk=_sw_progress
+                    )
+                    print()  # end progress line
+                except Exception as exc:
+                    print(f"\n[error] Batch failed: {exc}")
+                    continue
+
+                for device_id, apps in batch_result.items():
+                    device_name = device_id_to_name.get(device_id, device_id)
+                    all_apps[device_name] = apps
+
+                for device_id, device_name in device_id_to_name.items():
+                    if device_id not in batch_result:
+                        print(f"[warn] {device_name}: software inventory not available (skipped)")
 
                 output = all_apps if len(all_apps) > 1 else next(iter(all_apps.values()), [])
                 total = len(output) if isinstance(output, list) else sum(len(v) for v in output.values() if isinstance(v, list))

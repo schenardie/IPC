@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from urllib.parse import quote
 from typing import Optional
 
@@ -222,6 +223,170 @@ class IPCExplorer:
         )
         instances = response.get("instances", []) if response else []
         return [_clean_instance(inst) for inst in instances]
+
+    def get_inventory_batch(
+        self,
+        device_ids: list[str],
+        categories: list[str],
+        *,
+        on_chunk: Optional[Callable[[int, int], None]] = None,
+    ) -> dict[str, dict[str, list[dict]]]:
+        """Fetch inventory for multiple devices and categories using Graph batching.
+
+        All (device × category) combinations are issued as a single set of
+        batched requests (up to 20 per HTTP call). Id-only instances are
+        resolved in a second batch round-trip. Throttled requests are
+        automatically retried with the ``Retry-After`` delay.
+
+        Parameters
+        ----------
+        device_ids:
+            List of Intune managed device GUIDs.
+        categories:
+            List of inventory category IDs (e.g. ``["battery", "diskDrive"]``).
+        on_chunk:
+            Optional progress callback invoked after each batch chunk of 20
+            requests completes. Called as ``on_chunk(done, total)``.
+
+        Returns
+        -------
+        dict[str, dict[str, list[dict]]]
+            ``{device_id: {category: [cleaned_instances]}}``.
+            Devices or categories that returned 400/404 are omitted.
+        """
+        if not device_ids or not categories:
+            return {}
+
+        # Phase 1 — fetch all (device × category) pairs in one batched call.
+        requests_list: list[dict] = [
+            {
+                "id": f"{device_id}||{category}",
+                "method": "GET",
+                "url": (
+                    f"/deviceManagement/managedDevices('{device_id}')"
+                    f"/deviceInventories('{category}')"
+                    f"?$expand={_INVENTORY_EXPAND_WITH_PROPERTIES}"
+                ),
+            }
+            for device_id in device_ids
+            for category in categories
+        ]
+
+        batch_results = self._graph.batch(requests_list, on_chunk=on_chunk)
+
+        # Phase 2 — extract instances; collect id-only rows for hydration.
+        raw: dict[str, dict[str, list[dict]]] = {}
+        hydration_requests: list[dict] = []
+
+        for composite_id, result in batch_results.items():
+            if "||" not in composite_id:
+                continue
+            device_id, category = composite_id.split("||", 1)
+            status = result["status"]
+            body = result["body"]
+
+            if status in (400, 404):
+                continue
+            if not (200 <= status < 300):
+                logger.warning("Inventory %s/%s: unexpected status %d", device_id, category, status)
+                continue
+
+            instances = body.get("instances", [])
+            raw.setdefault(device_id, {})[category] = instances
+
+            for inst in instances:
+                non_meta = [k for k in inst if not k.startswith("@")]
+                if non_meta == ["id"] and isinstance(inst.get("id"), str):
+                    hydration_requests.append({
+                        "id": f"{device_id}||{category}||{inst['id']}",
+                        "method": "GET",
+                        "url": (
+                            f"/deviceManagement/managedDevices('{device_id}')"
+                            f"/deviceInventories('{category}')"
+                            f"/instances('{quote(inst['id'], safe='')}')"
+                        ),
+                    })
+
+        # Phase 3 — batch-hydrate id-only instances (if any).
+        if hydration_requests:
+            hydration_results = self._graph.batch(hydration_requests)
+            for composite_id, result in hydration_results.items():
+                parts = composite_id.split("||", 2)
+                if len(parts) != 3:
+                    continue
+                device_id, category, inst_id = parts
+                if not (200 <= result["status"] < 300):
+                    continue
+                body = result["body"]
+                if not body or "id" not in body:
+                    continue
+                instances = raw.get(device_id, {}).get(category, [])
+                for i, inst in enumerate(instances):
+                    if inst.get("id") == inst_id:
+                        instances[i] = body
+                        break
+
+        return {
+            device_id: {
+                cat: [_clean_instance(inst) for inst in insts]
+                for cat, insts in cats.items()
+            }
+            for device_id, cats in raw.items()
+        }
+
+    def get_software_inventory_batch(
+        self,
+        device_ids: list[str],
+        *,
+        on_chunk: Optional[Callable[[int, int], None]] = None,
+    ) -> dict[str, list[dict]]:
+        """Fetch software inventory for multiple devices using Graph batching.
+
+        Parameters
+        ----------
+        device_ids:
+            List of Intune managed device GUIDs.
+        on_chunk:
+            Optional progress callback invoked after each batch chunk of 20
+            requests completes. Called as ``on_chunk(done, total)``.
+
+        Returns
+        -------
+        dict[str, list[dict]]
+            ``{device_id: [app_dicts]}``.
+            Devices that returned 400/404 are omitted.
+        """
+        if not device_ids:
+            return {}
+
+        requests_list = [
+            {
+                "id": device_id,
+                "method": "GET",
+                "url": (
+                    f"/deviceManagement/managedDevices('{device_id}')"
+                    f"/deviceInventories('{_SOFTWARE_INVENTORY_CATEGORY}')"
+                    f"?$expand={_INVENTORY_EXPAND_WITH_PROPERTIES}"
+                ),
+            }
+            for device_id in device_ids
+        ]
+
+        batch_results = self._graph.batch(requests_list, on_chunk=on_chunk)
+
+        output: dict[str, list[dict]] = {}
+        for device_id, result in batch_results.items():
+            status = result["status"]
+            body = result["body"]
+            if status in (400, 404):
+                continue
+            if not (200 <= status < 300):
+                logger.warning("Software inventory %s: unexpected status %d", device_id, status)
+                continue
+            instances = body.get("instances", [])
+            output[device_id] = [_clean_instance(inst) for inst in instances]
+
+        return output
 
     def _get_inventory_instances(self, device_id: str, category: str) -> list[dict]:
         """Fetch inventory instances, preferring the direct instances endpoint."""
