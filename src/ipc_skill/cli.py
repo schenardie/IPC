@@ -153,6 +153,7 @@ MENU = """
 ╠══════════════════════════════════════════╣
 ║  1  Store a bearer token (paste)         ║
 ║  2  Get device inventory                 ║
+║  3  Get software inventory               ║
 ║  q  Quit                                 ║
 ╚══════════════════════════════════════════╝
 """
@@ -254,6 +255,31 @@ def main() -> None:
                         print("[ok] Copied to clipboard.")
                     else:
                         print("[warn] Could not access clipboard — install xclip on Linux.")
+
+            elif choice == "3":
+                devices = _pick_devices(ipc)
+                if not devices:
+                    continue
+
+                all_apps: dict = {}
+                for device in devices:
+                    device_id = device.get("id") or device.get("deviceId", "")
+                    device_name = device.get("deviceName", device_id)
+                    print(f"[info] Fetching software inventory for {device_name}...")
+                    try:
+                        apps = ipc.get_software_inventory(device_id)
+                        all_apps[device_name] = apps
+                    except Exception as exc:
+                        from ipc_skill.graph_client import GraphAPIError
+                        if isinstance(exc, GraphAPIError) and exc.status_code == 404:
+                            print(f"[warn] {device_name}: software inventory not available (skipped)")
+                        else:
+                            print(f"[error] {device_name}: {exc}")
+
+                output = all_apps if len(all_apps) > 1 else next(iter(all_apps.values()), [])
+                total = len(output) if isinstance(output, list) else sum(len(v) for v in output.values() if isinstance(v, list))
+                print(f"[ok] {len(all_apps)} device(s), {total} total application(s).")
+                _show_results(output, label="applications")
 
             else:
                 print("[?] Unknown option.")

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _INVENTORY_EXPAND = "instances"
 _INVENTORY_EXPAND_WITH_PROPERTIES = "instances($expand=Microsoft.Graph.deviceInventorySimpleItem/properties)"
+_SOFTWARE_INVENTORY_CATEGORY = "ApplicationProperties"
 
 
 def _camel_to_title(name: str) -> str:
@@ -195,6 +196,32 @@ class IPCExplorer:
             hydrated.append(self._hydrate_simple_instance(device_id, category, inst))
 
         return [_clean_instance(inst) for inst in hydrated]
+
+    def get_software_inventory(self, device_id: str) -> list[dict]:
+        """Return cleaned software (application) inventory for a device.
+
+        Uses the ``ApplicationProperties`` category with the nested
+        ``$expand=instances($expand=Microsoft.Graph.deviceInventorySimpleItem/properties)``
+        query directly, bypassing the ``/instances`` sub-endpoint which is not
+        supported for this category.
+
+        Parameters
+        ----------
+        device_id:
+            The Intune managed device GUID.
+
+        Returns
+        -------
+        list[dict]
+            One dict per installed application, keys are friendly names like
+            ``"Display Name"``, ``"Version"``, etc.
+        """
+        response = self._graph.get(
+            f"/deviceManagement/managedDevices('{device_id}')/deviceInventories('{_SOFTWARE_INVENTORY_CATEGORY}')",
+            params={"$expand": _INVENTORY_EXPAND_WITH_PROPERTIES},
+        )
+        instances = response.get("instances", []) if response else []
+        return [_clean_instance(inst) for inst in instances]
 
     def _get_inventory_instances(self, device_id: str, category: str) -> list[dict]:
         """Fetch inventory instances, preferring the direct instances endpoint."""
