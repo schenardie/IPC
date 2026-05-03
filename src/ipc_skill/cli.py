@@ -151,8 +151,7 @@ MENU = """
 ╔══════════════════════════════════════════╗
 ║         IPCSkill – Device Inventory      ║
 ╠══════════════════════════════════════════╣
-║  1a Store a bearer token (manual paste)  ║
-║  1b Store portalAuth (auto-refresh)      ║
+║  1  Store a bearer token (manual paste)  ║
 ║  2  Get device inventory                 ║
 ║  3  Get software inventory               ║
 ║  q  Quit                                 ║
@@ -163,15 +162,13 @@ MENU = """
 def _print_token_status(ipc: IPCExplorer) -> None:
     info = ipc.token_manager.token_info()
     if not info:
-        print("  ⚠  No token stored — use option 1a or 1b to authenticate.\n")
+        print("  ⚠  No token stored — use option 1 to authenticate.\n")
         return
     status = "⚠  EXPIRED" if info["expired"] else "✔  Valid"
-    auto = "✔  enabled (portalAuth stored)" if info.get("auto_refresh") else "⚠  disabled (manual paste only)"
-    print(f"  Token       : {status}")
-    print(f"  User        : {info['user']}")
-    print(f"  Tenant      : {info['tenant']}")
-    print(f"  Expiry      : {info['expires_at']} ({info['expires_in']})")
-    print(f"  Auto-refresh: {auto}\n")
+    print(f"  Token  : {status}")
+    print(f"  User   : {info['user']}")
+    print(f"  Tenant : {info['tenant']}")
+    print(f"  Expiry : {info['expires_at']} ({info['expires_in']})\n")
 
 
 def main() -> None:
@@ -186,34 +183,14 @@ def main() -> None:
             if choice == "q":
                 break
 
-            elif choice == "1a":
+            elif choice in ("1", "1a"):
+                print("[info] Tip: run 'python capture_portal_auth.py' to extract a token from")
+                print("[info] a live Edge/Chrome session (requires --remote-debugging-port=9222).")
+                print()
                 token = _masked_input("Paste bearer token (hidden): ").strip()
                 print(f"  [received {len(token)} characters — {'✓ looks like a JWT' if token.startswith('eyJ') else '⚠ unexpected format'}]")
                 ipc.token_manager.store_token(access_token=token)
                 print("[ok] Token stored.")
-
-            elif choice == "1b":
-                print("[info] portalAuthorization enables automatic token refresh.")
-                print("[info] How to get it:")
-                print("[info]   1. Open https://intune.microsoft.com in your browser and sign in.")
-                print("[info]   2. Open DevTools → Network tab, filter by 'DelegationToken'.")
-                print("[info]   3. Navigate to any Intune section to trigger the call.")
-                print("[info]   4. Click the POST request → Response tab.")
-                print("[info]   5. Copy the value of the 'portalAuthorization' field.")
-                print()
-                portal_auth = _masked_input("Paste portalAuthorization (hidden): ").strip()
-                print(f"  [received {len(portal_auth)} characters]")
-
-                existing = ipc.token_manager.token_info()
-                if existing and existing.get("tenant") and existing["tenant"] != "unknown":
-                    tenant_id = existing["tenant"]
-                    print(f"  [using existing tenant: {tenant_id}]")
-                else:
-                    tenant_id = input("Tenant ID (GUID): ").strip()
-
-                print("[info] Validating portalAuthorization via DelegationToken...")
-                ipc.token_manager.store_portal_auth(portal_auth, tenant_id)
-                print("[ok] portalAuthorization stored. Tokens will refresh automatically.")
 
             elif choice == "2":
                 devices = _pick_devices(ipc)

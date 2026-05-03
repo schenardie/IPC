@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from .config import IPCSkillConfig
-from .ibiza_token_provider import IbizaTokenProvider, IbizaTokenProviderError
 from .keyring_token_store import KeyringTokenStore
 from .local_token_store import LocalTokenStore
 
@@ -72,7 +71,7 @@ class TokenExpiredError(Exception):
 
 
 class TokenRefreshError(Exception):
-    """Raised when an automatic token refresh via the Ibiza DelegationToken endpoint fails."""
+    """Raised when a token refresh operation fails."""
 
 
 class TokenManager:
@@ -92,11 +91,9 @@ class TokenManager:
         self,
         config: IPCSkillConfig,
         token_store: Optional[KeyringTokenStore | LocalTokenStore] = None,
-        ibiza_provider: Optional[IbizaTokenProvider] = None,
     ) -> None:
         self._config = config
         self._store = token_store or KeyringTokenStore(config.token_store.store_dir or None)
-        self._ibiza = ibiza_provider or IbizaTokenProvider()
 
     def store_token(
         self,
@@ -124,21 +121,17 @@ class TokenManager:
         else:
             expiry_ts = datetime.now(tz=timezone.utc).timestamp() + 3600
 
-        # Preserve any existing portal_auth / tenant when only updating the access token
+        # Preserve tenant_id when only updating the access token
         try:
             _, existing_meta = self._load_token()
-            portal_auth = existing_meta.get("portal_authorization")
             tenant_id = existing_meta.get("tenant_id")
         except (FileNotFoundError, KeyError):
-            portal_auth = None
             tenant_id = None
 
         self._store.save(
             access_token=access_token,
-            refresh_token=portal_auth,
             metadata={
                 "expires_at": expiry_ts,
-                "portal_authorization": portal_auth,
                 "tenant_id": tenant_id,
             },
         )
@@ -146,51 +139,6 @@ class TokenManager:
         logger.info(
             "Token stored (expiry: %s UTC)",
             datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat(),
-        )
-
-    def store_portal_auth(
-        self,
-        portal_authorization: str,
-        tenant_id: str,
-    ) -> None:
-        """Store a portalAuthorization refresh token and immediately validate it.
-
-        Calls the Intune DelegationToken endpoint to exchange the given
-        ``portal_authorization`` for a fresh access token and a rotated
-        refresh token. Both are persisted automatically.
-
-        Parameters
-        ----------
-        portal_authorization:
-            The ``portalAuthorization`` value copied from a DelegationToken
-            response in browser DevTools (see :mod:`ibiza_token_provider` for
-            instructions).
-        tenant_id:
-            Your Entra ID tenant GUID.
-
-        Raises
-        ------
-        TokenRefreshError
-            If the DelegationToken exchange fails.
-        """
-        try:
-            result = self._ibiza.refresh(portal_authorization, tenant_id)
-        except IbizaTokenProviderError as exc:
-            raise TokenRefreshError(str(exc)) from exc
-
-        self._store.save(
-            access_token=result.access_token,
-            refresh_token=result.portal_authorization,
-            metadata={
-                "expires_at": result.expires_at,
-                "portal_authorization": result.portal_authorization,
-                "tenant_id": tenant_id,
-            },
-        )
-
-        logger.info(
-            "Portal auth stored; auto-refresh enabled (expiry: %s UTC).",
-            datetime.fromtimestamp(result.expires_at, tz=timezone.utc).isoformat(),
         )
 
     def token_info(self) -> Optional[dict]:
@@ -212,7 +160,6 @@ class TokenManager:
             "expires_at": expires_at_dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "expires_in": f"{int(seconds_left // 3600)}h {int((seconds_left % 3600) // 60)}m" if seconds_left > 0 else "EXPIRED",
             "expired": seconds_left <= 0,
-            "auto_refresh": bool(metadata.get("portal_authorization")),
         }
 
     def get_valid_token(self) -> str:
@@ -241,39 +188,9 @@ class TokenManager:
             logger.debug("Using cached access token (expires in %.0f s).", expires_at - now)
             return access_token
 
-        # Access token is expired — attempt auto-refresh via portalAuthorization.
-        portal_auth = metadata.get("portal_authorization")
-        tenant_id = metadata.get("tenant_id", "")
-
-        if not portal_auth:
-            raise TokenExpiredError(
-                "Access token has expired. "
-                "Use option 1 to paste a fresh token, or option 1b to store a "
-                "portalAuthorization for automatic refresh."
-            )
-
-        logger.info("Access token expired — auto-refreshing via Ibiza DelegationToken...")
-        try:
-            result = self._ibiza.refresh(portal_auth, tenant_id)
-        except IbizaTokenProviderError as exc:
-            raise TokenRefreshError(
-                f"Auto-refresh failed: {exc}. "
-                "Re-paste a fresh portalAuthorization via option 1b."
-            ) from exc
-
-        # Persist rotated refresh token + new access token
-        self._store.save(
-            access_token=result.access_token,
-            refresh_token=result.portal_authorization,
-            metadata={
-                "expires_at": result.expires_at,
-                "portal_authorization": result.portal_authorization,
-                "tenant_id": tenant_id,
-            },
+        raise TokenExpiredError(
+            "Access token has expired. Use option 1 to paste a fresh token."
         )
-
-        logger.info("Token auto-refreshed successfully.")
-        return result.access_token
 
     def _load_token(self) -> tuple[str, dict]:
         data = self._store.load()
