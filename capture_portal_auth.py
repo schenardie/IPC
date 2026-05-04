@@ -1,13 +1,17 @@
 """
-Extracts the Intune-scoped microsoft.graph access token from the live Edge/Chrome
-session via CDP. Requires Edge running with --remote-debugging-port=9222.
+Extracts the Intune-scoped microsoft.graph access token AND the Azure Portal
+refresh token from the live Edge/Chrome session via CDP.
+
+Requires Edge running with --remote-debugging-port=9222.
 
 Usage:
   1. Launch Edge with:
        msedge.exe --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=%TEMP%\edge-debug2 https://intune.microsoft.com
   2. Sign in and navigate to any Intune blade (e.g. Devices).
   3. Run: python capture_portal_auth.py
-  4. Paste the output Bearer token into ipc-skill option 1a.
+  4. Use the output:
+     - bearer_token.txt  → paste into ipc-skill option 1 (immediate use)
+     - broker_rt.json    → used by ipc-skill option 1c for BroCI auto-refresh
 """
 import json
 import base64
@@ -21,6 +25,7 @@ except ImportError:
 
 CDP_URL = "http://localhost:9222"
 INTUNE_CLIENT_ID = "5926fc8e-304e-4f59-8bed-58ca97cc39a4"
+AZURE_PORTAL_CLIENT_ID = "c44b4083-3bb0-49c1-b47d-974e53cbdf3c"
 
 
 def decode_jwt_payload(token):
@@ -52,18 +57,21 @@ def main():
     ws = websocket.create_connection(target["webSocketDebuggerUrl"])
 
     js = """(function() {
-  var tokens = [];
+  var result = {accessTokens: [], refreshTokens: []};
   for (var i = 0; i < sessionStorage.length; i++) {
     var k = sessionStorage.key(i);
     var v = sessionStorage.getItem(k);
     try {
       var obj = JSON.parse(v);
       if (obj && obj.credentialType === 'AccessToken' && obj.secret) {
-        tokens.push({target: obj.target || '', expiresOn: obj.expiresOn || 0, secret: obj.secret});
+        result.accessTokens.push({target: obj.target || '', expiresOn: obj.expiresOn || 0, secret: obj.secret, clientId: obj.clientId || ''});
+      }
+      if (obj && obj.credentialType === 'RefreshToken' && obj.secret) {
+        result.refreshTokens.push({clientId: obj.clientId || '', secret: obj.secret, homeAccountId: obj.homeAccountId || ''});
       }
     } catch(e) {}
   }
-  return JSON.stringify(tokens);
+  return JSON.stringify(result);
 })()"""
 
     ws.send(json.dumps({"id": 1, "method": "Runtime.evaluate",
@@ -71,12 +79,14 @@ def main():
     resp = json.loads(ws.recv())
     ws.close()
 
-    val = resp.get("result", {}).get("result", {}).get("value", "[]")
-    tokens = json.loads(val)
+    val = resp.get("result", {}).get("result", {}).get("value", '{"accessTokens":[],"refreshTokens":[]}')
+    data = json.loads(val)
+    access_tokens = data.get("accessTokens", [])
+    refresh_tokens = data.get("refreshTokens", [])
 
-    # Find the Intune client token with DeviceManagement scopes
+    # --- Access token: Intune client (5926fc8e) with DeviceManagement scopes ---
     best = None
-    for t in tokens:
+    for t in access_tokens:
         secret = t.get("secret", "")
         payload = decode_jwt_payload(secret)
         appid = payload.get("appid", "")
@@ -88,7 +98,7 @@ def main():
 
     if not best:
         # Fallback: any graph token with DeviceManagement scope
-        for t in tokens:
+        for t in access_tokens:
             secret = t.get("secret", "")
             payload = decode_jwt_payload(secret)
             scp = payload.get("scp", "")
@@ -108,6 +118,7 @@ def main():
     payload = best.get("_payload", {})
     scp = payload.get("scp", "")
     expires_epoch = best.get("expiresOn", 0)
+    tenant_id = payload.get("tid", "")
 
     import datetime
     try:
@@ -122,10 +133,12 @@ def main():
     print("[+] Intune access token extracted!")
     print("=" * 60)
     print(f"appid   : {payload.get('appid','?')}")
+    print(f"upn     : {payload.get('upn') or payload.get('unique_name','?')}")
+    print(f"tenant  : {tenant_id}")
     print(f"scopes  : {scp[:120]}...")
     print(f"expires : {expires_str}")
     print()
-    print("Bearer token (copy this and paste into ipc-skill option 1a):")
+    print("Bearer token (copy this and paste into ipc-skill option 1):")
     print()
     print(bearer[:120] + "...[truncated]")
     print()
@@ -133,6 +146,36 @@ def main():
     with open("bearer_token.txt", "w") as f:
         f.write(bearer)
     print("[+] Full token saved to bearer_token.txt")
+
+    # --- Broker refresh token: Azure Portal (c44b4083) for BroCI auto-refresh ---
+    broker_rt = None
+    for rt in refresh_tokens:
+        cid = rt.get("clientId", "")
+        if AZURE_PORTAL_CLIENT_ID.lower() in cid.lower() or cid.lower() == AZURE_PORTAL_CLIENT_ID.lower():
+            broker_rt = rt
+            break
+
+    if broker_rt:
+        print()
+        print("=" * 60)
+        print("[+] Azure Portal refresh token found (for BroCI auto-refresh)!")
+        print("=" * 60)
+        broci_data = {
+            "broker_refresh_token": broker_rt["secret"],
+            "broker_client_id": AZURE_PORTAL_CLIENT_ID,
+            "broker_url": "https://portal.azure.com/",
+            "tenant_id": tenant_id,
+            "home_account_id": broker_rt.get("homeAccountId", ""),
+        }
+        with open("broker_rt.json", "w") as f:
+            json.dump(broci_data, f, indent=2)
+        print("[+] Broker RT saved to broker_rt.json")
+        print("[info] Use ipc-skill option 1c to enable BroCI auto-refresh with this token.")
+    else:
+        print()
+        print("[warn] No Azure Portal refresh token found in sessionStorage.")
+        print("[info] BroCI auto-refresh requires the c44b4083 RT.")
+        print("[info] Try navigating to portal.azure.com in the same Edge session, then re-run.")
 
 
 if __name__ == "__main__":
