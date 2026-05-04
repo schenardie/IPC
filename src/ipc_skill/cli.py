@@ -152,7 +152,6 @@ MENU = """
 ║                   IPCSkill – Device Inventory                     ║
 ╠═══════════════════════════════════════════════════════════════════╣
 ║  1   Store a bearer token (manual paste)                          ║
-║  1b  Enable WAM auto-refresh (Windows only, uses OS sign-in)      ║
 ║  1c  Enable BroCI auto-refresh (cross-platform, needs broker RT)  ║
 ║  2   Get device inventory                                         ║
 ║  3   Get software inventory                                       ║
@@ -164,14 +163,17 @@ MENU = """
 def _print_token_status(ipc: IPCExplorer) -> None:
     info = ipc.token_manager.token_info()
     if not info:
-        print("  ⚠  No token stored — use option 1 or 1b to authenticate.\n")
+        print("  ⚠  No token stored — use option 1c (recommended) or 1 to authenticate.\n")
         return
     status = "⚠  EXPIRED" if info["expired"] else "✔  Valid"
     print(f"  Token        : {status}")
     print(f"  User         : {info['user']}")
     print(f"  Tenant       : {info['tenant']}")
     print(f"  Expiry       : {info['expires_at']} ({info['expires_in']})")
-    print(f"  Auto-refresh : {info['auto_refresh']}\n")
+    print(f"  Auto-refresh : {info['auto_refresh']}")
+    if info.get("last_refreshed"):
+        print(f"  Last refresh : {info['last_refreshed']}")
+    print()
 
 
 def main() -> None:
@@ -195,49 +197,36 @@ def main() -> None:
                 ipc.token_manager.store_token(access_token=token)
                 print("[ok] Token stored.")
 
-            elif choice == "1b":
-                print("[info] WAM auto-refresh uses the Windows Account Manager (WAM) broker.")
-                print("[info] It silently refreshes your token using your Windows sign-in —")
-                print("[info] the same mechanism the Intune portal uses to stay signed in.")
-                print()
-                tenant_id = input("Tenant ID (GUID, or press Enter for 'organizations'): ").strip()
-                if not tenant_id:
-                    tenant_id = "organizations"
-                username = input("UPN hint (e.g. user@contoso.com, or Enter to skip): ").strip() or None
-                print("[info] Contacting Windows WAM broker — a sign-in dialog may appear...")
-                try:
-                    resolved_user = ipc.token_manager.store_wam_auth(
-                        tenant_id=tenant_id, username=username
-                    )
-                    print(f"[ok] WAM auto-refresh enabled for {resolved_user}.")
-                    print("[ok] Tokens will now refresh silently whenever they expire.")
-                except Exception as exc:
-                    print(f"[error] WAM setup failed: {exc}")
-
             elif choice == "1c":
                 import os, json as _json
-                print("[info] BroCI auto-refresh exchanges your Azure Portal refresh token")
+                print("[info] BroCI auto-refresh: exchanges your Azure Portal refresh token")
                 print("[info] for a fresh Intune token — works on Windows, Mac, and Linux.")
-                print("[info] Run 'python capture_portal_auth.py' first to generate broker_rt.json.")
+                print("[info] After setup, tokens refresh automatically. No pasting required.")
                 print()
                 default_rt_file = "broker_rt.json"
-                rt_file = input(f"Path to broker_rt.json [default: {default_rt_file}]: ").strip() or default_rt_file
-                if not os.path.isfile(rt_file):
-                    print(f"[error] File not found: {rt_file}")
+                if os.path.isfile(default_rt_file):
+                    rt_file = default_rt_file
+                    print(f"[info] Found {default_rt_file}")
+                else:
+                    rt_file = input("Path to broker_rt.json (run capture_portal_auth.py first): ").strip()
+                if not rt_file or not os.path.isfile(rt_file):
+                    print("[error] broker_rt.json not found.")
                     print("[info] Run: python capture_portal_auth.py")
+                    print("[info] Then come back here — no need to paste any tokens manually.")
                 else:
                     try:
                         with open(rt_file) as f:
                             broci_data = _json.load(f)
                         tenant_id = broci_data.get("tenant_id") or input("Tenant ID (GUID): ").strip()
                         broker_rt = broci_data["broker_refresh_token"]
-                        print("[info] Testing BroCI exchange...")
+                        print("[info] Exchanging broker RT for Intune token...")
                         resolved_user = ipc.token_manager.store_broci_auth(
                             tenant_id=tenant_id,
                             broker_refresh_token=broker_rt,
                         )
-                        print(f"[ok] BroCI auto-refresh enabled for {resolved_user}.")
-                        print("[ok] Tokens will now refresh automatically whenever they expire.")
+                        print(f"[ok] Authenticated as {resolved_user}.")
+                        print("[ok] Auto-refresh enabled — tokens will renew silently whenever they expire.")
+                        print("[ok] You can now use options 2 and 3 directly.")
                     except Exception as exc:
                         print(f"[error] BroCI setup failed: {exc}")
 
@@ -367,14 +356,13 @@ def main() -> None:
 
         except TokenExpiredError:
             print("[error] Your token has expired.")
-            print("[info]  Option 1b: WAM auto-refresh (Windows, uses OS sign-in)")
-            print("[info]  Option 1c: BroCI auto-refresh (cross-platform, run capture_portal_auth.py first)")
+            print("[info]  Option 1c: BroCI auto-refresh (run capture_portal_auth.py first)")
             print("[info]  Option 1:  Paste a fresh Bearer token manually")
         except TokenRefreshError as exc:
             print(f"[error] Auto-refresh failed: {exc}")
-            print("[info]  Re-run option 1b (WAM) or 1c (BroCI) to re-authenticate.")
+            print("[info]  Re-run option 1c to re-authenticate.")
         except FileNotFoundError:
-            print("[error] No token stored yet — use option 1, 1b, or 1c to authenticate.")
+            print("[error] No token stored yet — use option 1c or 1 to authenticate.")
         except Exception as exc:
             print(f"[error] {exc}")
 

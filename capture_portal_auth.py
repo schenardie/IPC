@@ -6,12 +6,12 @@ Requires Edge running with --remote-debugging-port=9222.
 
 Usage:
   1. Launch Edge with:
-       msedge.exe --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=%TEMP%\edge-debug2 https://intune.microsoft.com
+       msedge.exe --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir=%TEMP%\\edge-debug2 https://intune.microsoft.com
   2. Sign in and navigate to any Intune blade (e.g. Devices).
   3. Run: python capture_portal_auth.py
   4. Use the output:
-     - bearer_token.txt  → paste into ipc-skill option 1 (immediate use)
-     - broker_rt.json    → used by ipc-skill option 1c for BroCI auto-refresh
+     - bearer_token.txt  → one-time token for ipc-skill option 1 (manual fallback)
+     - broker_rt.json    → used by ipc-skill option 1c for BroCI auto-refresh (recommended)
 """
 import json
 import base64
@@ -138,14 +138,16 @@ def main():
     print(f"scopes  : {scp[:120]}...")
     print(f"expires : {expires_str}")
     print()
-    print("Bearer token (copy this and paste into ipc-skill option 1):")
+    print("Bearer token (saved to bearer_token.txt):")
     print()
-    print(bearer[:120] + "...[truncated]")
+    print(bearer)
     print()
 
     with open("bearer_token.txt", "w") as f:
         f.write(bearer)
-    print("[+] Full token saved to bearer_token.txt")
+    print("[+] Full token also saved to bearer_token.txt")
+    print("[info] Tip: use ipc-skill option 1c with broker_rt.json for automatic refresh.")
+    print("[info] Option 1c authenticates you fully — no need to copy/paste the token above.")
 
     # --- Broker refresh token: Azure Portal (c44b4083) for BroCI auto-refresh ---
     broker_rt = None

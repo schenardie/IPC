@@ -12,6 +12,7 @@ import base64
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -269,6 +270,12 @@ class TokenManager:
         expires_at_dt = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc)
         seconds_left = expires_at_ts - now
 
+        last_refreshed_ts = metadata.get("last_refreshed")
+        last_refreshed = (
+            datetime.fromtimestamp(last_refreshed_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if last_refreshed_ts else None
+        )
+
         return {
             "user": payload.get("upn") or payload.get("unique_name") or payload.get("preferred_username", "unknown"),
             "tenant": payload.get("tid") or metadata.get("tenant_id", "unknown"),
@@ -280,6 +287,7 @@ class TokenManager:
                 else "BroCI (NAA broker)" if metadata.get("broci_tenant_id")
                 else "disabled"
             ),
+            "last_refreshed": last_refreshed,
         }
 
     def get_valid_token(self) -> str:
@@ -322,9 +330,11 @@ class TokenManager:
                         "tenant_id": wam_tenant,
                         "wam_tenant_id": wam_tenant,
                         "wam_username": result.account_username,
+                        "last_refreshed": time.time(),
                     },
                 )
                 logger.info("WAM silent refresh succeeded.")
+                print("[info] Token auto-refreshed via WAM.")
                 return result.access_token
             except WamTokenProviderError as exc:
                 raise TokenRefreshError(f"WAM auto-refresh failed: {exc}") from exc
@@ -346,9 +356,11 @@ class TokenManager:
                         "tenant_id": broci_tenant,
                         "broci_tenant_id": broci_tenant,
                         "broci_broker_rt": result.refresh_token,
+                        "last_refreshed": time.time(),
                     },
                 )
                 logger.info("BroCI silent refresh succeeded.")
+                print("[info] Token auto-refreshed via BroCI.")
                 return result.access_token
             except BrociTokenProviderError as exc:
                 raise TokenRefreshError(f"BroCI auto-refresh failed: {exc}") from exc
