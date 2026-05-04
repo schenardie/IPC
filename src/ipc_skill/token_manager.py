@@ -18,6 +18,7 @@ from typing import Optional
 from .config import IPCSkillConfig
 from .keyring_token_store import KeyringTokenStore
 from .local_token_store import LocalTokenStore
+from .wam_token_provider import WamTokenProvider, WamTokenProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +92,11 @@ class TokenManager:
         self,
         config: IPCSkillConfig,
         token_store: Optional[KeyringTokenStore | LocalTokenStore] = None,
+        wam_provider: Optional[WamTokenProvider] = None,
     ) -> None:
         self._config = config
         self._store = token_store or KeyringTokenStore(config.token_store.store_dir or None)
+        self._wam = wam_provider or WamTokenProvider()
 
     def store_token(
         self,
@@ -141,6 +144,55 @@ class TokenManager:
             datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat(),
         )
 
+    def store_wam_auth(
+        self,
+        tenant_id: str,
+        username: str | None = None,
+    ) -> str:
+        """Acquire a fresh token via the Windows WAM broker and store it.
+
+        On success the acquired token is persisted (with WAM metadata so
+        :meth:`get_valid_token` can silently refresh it later) and the
+        resolved username is returned.
+
+        Parameters
+        ----------
+        tenant_id:
+            Your Entra ID tenant GUID.
+        username:
+            Optional UPN hint (e.g. ``user@contoso.com``).
+
+        Returns
+        -------
+        str
+            The UPN of the account that was used.
+
+        Raises
+        ------
+        TokenRefreshError
+            If WAM token acquisition fails.
+        """
+        try:
+            result = self._wam.refresh(tenant_id=tenant_id, username=username)
+        except WamTokenProviderError as exc:
+            raise TokenRefreshError(str(exc)) from exc
+
+        self._store.save(
+            access_token=result.access_token,
+            metadata={
+                "expires_at": result.expires_at,
+                "tenant_id": tenant_id,
+                "wam_tenant_id": tenant_id,
+                "wam_username": result.account_username,
+            },
+        )
+        logger.info(
+            "WAM token stored for %s (expiry: %s UTC)",
+            result.account_username,
+            datetime.fromtimestamp(result.expires_at, tz=timezone.utc).isoformat(),
+        )
+        return result.account_username
+
     def token_info(self) -> Optional[dict]:
         """Return human-readable info about the stored token, or ``None`` if none stored."""
         try:
@@ -160,6 +212,7 @@ class TokenManager:
             "expires_at": expires_at_dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "expires_in": f"{int(seconds_left // 3600)}h {int((seconds_left % 3600) // 60)}m" if seconds_left > 0 else "EXPIRED",
             "expired": seconds_left <= 0,
+            "auto_refresh": "WAM (Windows broker)" if metadata.get("wam_tenant_id") else "disabled",
         }
 
     def get_valid_token(self) -> str:
@@ -188,8 +241,33 @@ class TokenManager:
             logger.debug("Using cached access token (expires in %.0f s).", expires_at - now)
             return access_token
 
+        # Token expired — try WAM silent refresh if configured
+        wam_tenant = metadata.get("wam_tenant_id")
+        if wam_tenant:
+            logger.info("Access token expired — attempting WAM silent refresh …")
+            try:
+                wam_username = metadata.get("wam_username")
+                result = self._wam.refresh(tenant_id=wam_tenant, username=wam_username)
+                # Persist the refreshed token
+                self._store.save(
+                    access_token=result.access_token,
+                    metadata={
+                        "expires_at": result.expires_at,
+                        "tenant_id": wam_tenant,
+                        "wam_tenant_id": wam_tenant,
+                        "wam_username": result.account_username,
+                    },
+                )
+                logger.info("WAM silent refresh succeeded.")
+                return result.access_token
+            except WamTokenProviderError as exc:
+                raise TokenRefreshError(
+                    f"WAM auto-refresh failed: {exc}"
+                ) from exc
+
         raise TokenExpiredError(
-            "Access token has expired. Use option 1 to paste a fresh token."
+            "Access token has expired. Use option 1 to paste a fresh token, "
+            "or option 1b to enable WAM auto-refresh."
         )
 
     def _load_token(self) -> tuple[str, dict]:

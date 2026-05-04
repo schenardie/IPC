@@ -5,6 +5,7 @@ from .config import IPCSkillConfig, LocalTokenStoreConfig, INTUNE_CLIENT_ID
 from .ipc_explorer import IPCExplorer
 from .token_manager import TokenManager, TokenExpiredError, TokenRefreshError
 from .graph_client import GraphClient, GraphAPIError
+from .wam_token_provider import WamTokenProvider, WamTokenProviderError
 
 __all__ = [
     "IPCSkillConfig",
@@ -16,4 +17,6 @@ __all__ = [
     "TokenRefreshError",
     "GraphClient",
     "GraphAPIError",
+    "WamTokenProvider",
+    "WamTokenProviderError",
 ]

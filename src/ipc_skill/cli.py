@@ -148,27 +148,29 @@ def _pick_devices(ipc: IPCExplorer) -> list[dict]:
 
 
 MENU = """
-╔══════════════════════════════════════════╗
-║         IPCSkill – Device Inventory      ║
-╠══════════════════════════════════════════╣
-║  1  Store a bearer token (manual paste)  ║
-║  2  Get device inventory                 ║
-║  3  Get software inventory               ║
-║  q  Quit                                 ║
-╚══════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║              IPCSkill – Device Inventory                 ║
+╠══════════════════════════════════════════════════════════╣
+║  1   Store a bearer token (manual paste)                 ║
+║  1b  Enable WAM auto-refresh (Windows only)              ║
+║  2   Get device inventory                                ║
+║  3   Get software inventory                              ║
+║  q   Quit                                                ║
+╚══════════════════════════════════════════════════════════╝
 """
 
 
 def _print_token_status(ipc: IPCExplorer) -> None:
     info = ipc.token_manager.token_info()
     if not info:
-        print("  ⚠  No token stored — use option 1 to authenticate.\n")
+        print("  ⚠  No token stored — use option 1 or 1b to authenticate.\n")
         return
     status = "⚠  EXPIRED" if info["expired"] else "✔  Valid"
-    print(f"  Token  : {status}")
-    print(f"  User   : {info['user']}")
-    print(f"  Tenant : {info['tenant']}")
-    print(f"  Expiry : {info['expires_at']} ({info['expires_in']})\n")
+    print(f"  Token        : {status}")
+    print(f"  User         : {info['user']}")
+    print(f"  Tenant       : {info['tenant']}")
+    print(f"  Expiry       : {info['expires_at']} ({info['expires_in']})")
+    print(f"  Auto-refresh : {info['auto_refresh']}\n")
 
 
 def main() -> None:
@@ -191,6 +193,25 @@ def main() -> None:
                 print(f"  [received {len(token)} characters — {'✓ looks like a JWT' if token.startswith('eyJ') else '⚠ unexpected format'}]")
                 ipc.token_manager.store_token(access_token=token)
                 print("[ok] Token stored.")
+
+            elif choice == "1b":
+                print("[info] WAM auto-refresh uses the Windows Account Manager (WAM) broker.")
+                print("[info] It silently refreshes your token using your Windows sign-in —")
+                print("[info] the same mechanism the Intune portal uses to stay signed in.")
+                print()
+                tenant_id = input("Tenant ID (GUID, or press Enter for 'organizations'): ").strip()
+                if not tenant_id:
+                    tenant_id = "organizations"
+                username = input("UPN hint (e.g. user@contoso.com, or Enter to skip): ").strip() or None
+                print("[info] Contacting Windows WAM broker — a sign-in dialog may appear...")
+                try:
+                    resolved_user = ipc.token_manager.store_wam_auth(
+                        tenant_id=tenant_id, username=username
+                    )
+                    print(f"[ok] WAM auto-refresh enabled for {resolved_user}.")
+                    print("[ok] Tokens will now refresh silently whenever they expire.")
+                except Exception as exc:
+                    print(f"[error] WAM setup failed: {exc}")
 
             elif choice == "2":
                 devices = _pick_devices(ipc)
@@ -317,14 +338,14 @@ def main() -> None:
                 print("[?] Unknown option.")
 
         except TokenExpiredError:
-            print("[error] Your token has expired and no portalAuthorization is stored.")
-            print("[info]  Use option 1b to store a portalAuthorization for automatic refresh,")
-            print("[info]  or option 1a to paste a fresh Bearer token manually.")
+            print("[error] Your token has expired.")
+            print("[info]  Use option 1b to enable WAM auto-refresh (Windows),")
+            print("[info]  or option 1 to paste a fresh Bearer token manually.")
         except TokenRefreshError as exc:
             print(f"[error] Auto-refresh failed: {exc}")
-            print("[info]  Re-paste a portalAuthorization via option 1b.")
+            print("[info]  Re-run option 1b to re-authenticate via WAM.")
         except FileNotFoundError:
-            print("[error] No token stored yet — use option 1a or 1b to authenticate.")
+            print("[error] No token stored yet — use option 1 or 1b to authenticate.")
         except Exception as exc:
             print(f"[error] {exc}")
 

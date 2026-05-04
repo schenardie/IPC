@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
 from ipc_skill import IPCSkillConfig, TokenExpiredError, TokenManager
 from ipc_skill.config import LocalTokenStoreConfig
 from ipc_skill.local_token_store import LocalTokenStore
-from ipc_skill.token_manager import _extract_tenant_from_jwt, _normalize_access_token
+from ipc_skill.token_manager import TokenRefreshError, _extract_tenant_from_jwt, _normalize_access_token
+from ipc_skill.wam_token_provider import WamTokenProviderError, WamTokenResult
 
 
 def _make_jwt(payload: dict) -> str:
@@ -21,9 +24,9 @@ def _make_jwt(payload: dict) -> str:
     return f"{b64({})}.{b64(payload)}.fake-sig"
 
 
-def _make_manager(config: IPCSkillConfig, tmp_path: Path) -> tuple[TokenManager, LocalTokenStore]:
+def _make_manager(config: IPCSkillConfig, tmp_path: Path, wam_provider=None) -> tuple[TokenManager, LocalTokenStore]:
     store = LocalTokenStore(store_dir=tmp_path)
-    manager = TokenManager(config, token_store=store)
+    manager = TokenManager(config, token_store=store, wam_provider=wam_provider)
     return manager, store
 
 
@@ -97,3 +100,114 @@ class TestNormalizeAccessToken:
     def test_extracts_from_quoted_bearer(self):
         jwt = _make_jwt({"exp": 9999999999})
         assert _normalize_access_token(f'"Bearer {jwt}"') == jwt
+
+
+def _wam_result(token: str = "wam-access-token", offset: int = 3600) -> WamTokenResult:
+    return WamTokenResult(
+        access_token=token,
+        expires_at=time.time() + offset,
+        account_username="user@contoso.com",
+        tenant_id="test-tenant",
+    )
+
+
+class TestStoreWamAuth:
+    def test_stores_token_and_wam_metadata(self, config: IPCSkillConfig, tmp_path: Path):
+        mock_wam = MagicMock()
+        mock_wam.refresh.return_value = _wam_result()
+        manager, store = _make_manager(config, tmp_path, wam_provider=mock_wam)
+
+        username = manager.store_wam_auth(tenant_id="test-tenant", username="user@contoso.com")
+
+        assert username == "user@contoso.com"
+        data = store.load()
+        assert data["access_token"] == "wam-access-token"
+        assert data["metadata"]["wam_tenant_id"] == "test-tenant"
+        assert data["metadata"]["wam_username"] == "user@contoso.com"
+
+    def test_raises_token_refresh_error_when_wam_fails(self, config: IPCSkillConfig, tmp_path: Path):
+        mock_wam = MagicMock()
+        mock_wam.refresh.side_effect = WamTokenProviderError("broker unavailable")
+        manager, _ = _make_manager(config, tmp_path, wam_provider=mock_wam)
+
+        with pytest.raises(TokenRefreshError, match="broker unavailable"):
+            manager.store_wam_auth(tenant_id="test-tenant")
+
+
+class TestWamAutoRefresh:
+    def test_silently_refreshes_expired_wam_token(self, config: IPCSkillConfig, tmp_path: Path):
+        """Expired token + WAM metadata → WAM provider called, new token returned."""
+        mock_wam = MagicMock()
+        mock_wam.refresh.return_value = _wam_result(token="new-token")
+        manager, store = _make_manager(config, tmp_path, wam_provider=mock_wam)
+
+        past_ts = time.time() - 100
+        store.save(
+            "old-token",
+            metadata={
+                "expires_at": past_ts,
+                "wam_tenant_id": "test-tenant",
+                "wam_username": "user@contoso.com",
+            },
+        )
+
+        result = manager.get_valid_token()
+        assert result == "new-token"
+        mock_wam.refresh.assert_called_once_with(
+            tenant_id="test-tenant", username="user@contoso.com"
+        )
+
+    def test_raises_token_expired_when_no_wam_configured(self, config: IPCSkillConfig, tmp_path: Path):
+        """Expired token with no WAM metadata → TokenExpiredError (not WAM)."""
+        mock_wam = MagicMock()
+        manager, store = _make_manager(config, tmp_path, wam_provider=mock_wam)
+
+        past_ts = time.time() - 100
+        store.save("old-token", metadata={"expires_at": past_ts})
+
+        with pytest.raises(TokenExpiredError):
+            manager.get_valid_token()
+        mock_wam.refresh.assert_not_called()
+
+    def test_raises_token_refresh_error_when_wam_refresh_fails(self, config: IPCSkillConfig, tmp_path: Path):
+        """WAM configured but refresh fails → TokenRefreshError propagated."""
+        mock_wam = MagicMock()
+        mock_wam.refresh.side_effect = WamTokenProviderError("silent refresh failed")
+        manager, store = _make_manager(config, tmp_path, wam_provider=mock_wam)
+
+        past_ts = time.time() - 100
+        store.save(
+            "old-token",
+            metadata={"expires_at": past_ts, "wam_tenant_id": "test-tenant"},
+        )
+
+        with pytest.raises(TokenRefreshError, match="silent refresh failed"):
+            manager.get_valid_token()
+
+    def test_token_info_shows_wam_enabled(self, config: IPCSkillConfig, tmp_path: Path):
+        mock_wam = MagicMock()
+        manager, store = _make_manager(config, tmp_path, wam_provider=mock_wam)
+
+        future_ts = time.time() + 3600
+        jwt = _make_jwt({"exp": int(future_ts), "upn": "user@contoso.com", "tid": "test-tenant"})
+        store.save(
+            jwt,
+            metadata={
+                "expires_at": future_ts,
+                "wam_tenant_id": "test-tenant",
+                "wam_username": "user@contoso.com",
+            },
+        )
+
+        info = manager.token_info()
+        assert info["auto_refresh"] == "WAM (Windows broker)"
+
+    def test_token_info_shows_wam_disabled_when_not_configured(self, config: IPCSkillConfig, tmp_path: Path):
+        manager, store = _make_manager(config, tmp_path)
+
+        future_ts = time.time() + 3600
+        jwt = _make_jwt({"exp": int(future_ts), "upn": "user@contoso.com", "tid": "tid"})
+        store.save(jwt, metadata={"expires_at": future_ts})
+
+        info = manager.token_info()
+        assert info["auto_refresh"] == "disabled"
