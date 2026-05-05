@@ -6,3 +6,6 @@ build/
 .pytest_cache/
 .coverage
 htmlcov/
+bearer_token.txt
+broker_rt.json
+portal_auth.txt

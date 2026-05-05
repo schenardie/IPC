@@ -12,12 +12,15 @@ import base64
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from typing import Optional
 
 from .config import IPCSkillConfig
 from .keyring_token_store import KeyringTokenStore
 from .local_token_store import LocalTokenStore
+from .wam_token_provider import WamTokenProvider, WamTokenProviderError
+from .broci_token_provider import BrociTokenProvider, BrociTokenProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +70,11 @@ def _extract_expiry_from_jwt(token: str) -> float | None:
 
 
 class TokenExpiredError(Exception):
-    """Raised when the stored access token has expired."""
+    """Raised when the stored access token has expired and no auto-refresh is available."""
+
+
+class TokenRefreshError(Exception):
+    """Raised when a token refresh operation fails."""
 
 
 class TokenManager:
@@ -87,9 +94,13 @@ class TokenManager:
         self,
         config: IPCSkillConfig,
         token_store: Optional[KeyringTokenStore | LocalTokenStore] = None,
+        wam_provider: Optional[WamTokenProvider] = None,
+        broci_provider: Optional[BrociTokenProvider] = None,
     ) -> None:
         self._config = config
         self._store = token_store or KeyringTokenStore(config.token_store.store_dir or None)
+        self._wam = wam_provider or WamTokenProvider()
+        self._broci = broci_provider or BrociTokenProvider()
 
     def store_token(
         self,
@@ -117,15 +128,134 @@ class TokenManager:
         else:
             expiry_ts = datetime.now(tz=timezone.utc).timestamp() + 3600
 
+        # Preserve tenant_id when only updating the access token
+        try:
+            _, existing_meta = self._load_token()
+            tenant_id = existing_meta.get("tenant_id")
+        except (FileNotFoundError, KeyError):
+            tenant_id = None
+
         self._store.save(
             access_token=access_token,
-            metadata={"expires_at": expiry_ts},
+            metadata={
+                "expires_at": expiry_ts,
+                "tenant_id": tenant_id,
+            },
         )
 
         logger.info(
             "Token stored (expiry: %s UTC)",
             datetime.fromtimestamp(expiry_ts, tz=timezone.utc).isoformat(),
         )
+
+    def store_wam_auth(
+        self,
+        tenant_id: str,
+        username: str | None = None,
+    ) -> str:
+        """Acquire a fresh token via the Windows WAM broker and store it.
+
+        On success the acquired token is persisted (with WAM metadata so
+        :meth:`get_valid_token` can silently refresh it later) and the
+        resolved username is returned.
+
+        Parameters
+        ----------
+        tenant_id:
+            Your Entra ID tenant GUID.
+        username:
+            Optional UPN hint (e.g. ``user@contoso.com``).
+
+        Returns
+        -------
+        str
+            The UPN of the account that was used.
+
+        Raises
+        ------
+        TokenRefreshError
+            If WAM token acquisition fails.
+        """
+        try:
+            result = self._wam.refresh(tenant_id=tenant_id, username=username)
+        except WamTokenProviderError as exc:
+            raise TokenRefreshError(str(exc)) from exc
+
+        self._store.save(
+            access_token=result.access_token,
+            metadata={
+                "expires_at": result.expires_at,
+                "tenant_id": tenant_id,
+                "wam_tenant_id": tenant_id,
+                "wam_username": result.account_username,
+            },
+        )
+        logger.info(
+            "WAM token stored for %s (expiry: %s UTC)",
+            result.account_username,
+            datetime.fromtimestamp(result.expires_at, tz=timezone.utc).isoformat(),
+        )
+        return result.account_username
+
+    def store_broci_auth(
+        self,
+        tenant_id: str,
+        broker_refresh_token: str,
+    ) -> str:
+        """Perform a BroCI exchange, store the result, and return the resolved UPN.
+
+        The broker refresh token (from the Azure Portal / ``c44b4083`` session)
+        is exchanged for an Intune access token via the NAA/BroCI flow.  Both
+        the new access token and the updated broker RT are persisted so
+        :meth:`get_valid_token` can silently re-exchange whenever the access
+        token expires.
+
+        Parameters
+        ----------
+        tenant_id:
+            Your Entra ID tenant GUID.
+        broker_refresh_token:
+            A refresh token belonging to the Azure Portal application
+            (``c44b4083``).  Obtained from ``capture_portal_auth.py`` (saved
+            to ``broker_rt.json``).
+
+        Returns
+        -------
+        str
+            The UPN extracted from the issued access token.
+
+        Raises
+        ------
+        TokenRefreshError
+            If the BroCI exchange fails.
+        """
+        try:
+            result = self._broci.refresh(
+                tenant_id=tenant_id,
+                broker_refresh_token=broker_refresh_token,
+            )
+        except BrociTokenProviderError as exc:
+            raise TokenRefreshError(str(exc)) from exc
+
+        upn = _decode_jwt_payload(result.access_token).get(
+            "upn"
+        ) or _decode_jwt_payload(result.access_token).get("unique_name", "unknown")
+
+        self._store.save(
+            access_token=result.access_token,
+            metadata={
+                "expires_at": result.expires_at,
+                "tenant_id": tenant_id,
+                "broci_tenant_id": tenant_id,
+                "broci_broker_rt": result.refresh_token,
+            },
+        )
+        logger.info(
+            "BroCI token stored for %s (expiry: %s UTC)",
+            upn,
+            datetime.fromtimestamp(result.expires_at, tz=timezone.utc).isoformat(),
+        )
+        return upn
 
     def token_info(self) -> Optional[dict]:
         """Return human-readable info about the stored token, or ``None`` if none stored."""
@@ -140,21 +270,39 @@ class TokenManager:
         expires_at_dt = datetime.fromtimestamp(expires_at_ts, tz=timezone.utc)
         seconds_left = expires_at_ts - now
 
+        last_refreshed_ts = metadata.get("last_refreshed")
+        last_refreshed = (
+            datetime.fromtimestamp(last_refreshed_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            if last_refreshed_ts else None
+        )
+
         return {
             "user": payload.get("upn") or payload.get("unique_name") or payload.get("preferred_username", "unknown"),
-            "tenant": payload.get("tid", "unknown"),
+            "tenant": payload.get("tid") or metadata.get("tenant_id", "unknown"),
             "expires_at": expires_at_dt.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "expires_in": f"{int(seconds_left // 3600)}h {int((seconds_left % 3600) // 60)}m" if seconds_left > 0 else "EXPIRED",
             "expired": seconds_left <= 0,
+            "auto_refresh": (
+                "WAM (Windows broker)" if metadata.get("wam_tenant_id")
+                else "BroCI (NAA broker)" if metadata.get("broci_tenant_id")
+                else "disabled"
+            ),
+            "last_refreshed": last_refreshed,
         }
 
     def get_valid_token(self) -> str:
-        """Return the stored Bearer access token if it is still valid.
+        """Return a valid Bearer access token, auto-refreshing if necessary.
+
+        If a ``portalAuthorization`` refresh token is stored and the access
+        token is expired, the token is automatically refreshed via the Intune
+        DelegationToken endpoint before returning.
 
         Raises
         ------
         TokenExpiredError
-            If the stored token has expired.
+            If the stored token has expired and no auto-refresh is configured.
+        TokenRefreshError
+            If auto-refresh was attempted but failed.
         FileNotFoundError
             If no token has been stored yet.
         """
@@ -168,8 +316,59 @@ class TokenManager:
             logger.debug("Using cached access token (expires in %.0f s).", expires_at - now)
             return access_token
 
+        # Token expired — try WAM silent refresh if configured
+        wam_tenant = metadata.get("wam_tenant_id")
+        if wam_tenant:
+            logger.info("Access token expired — attempting WAM silent refresh …")
+            try:
+                wam_username = metadata.get("wam_username")
+                result = self._wam.refresh(tenant_id=wam_tenant, username=wam_username)
+                self._store.save(
+                    access_token=result.access_token,
+                    metadata={
+                        "expires_at": result.expires_at,
+                        "tenant_id": wam_tenant,
+                        "wam_tenant_id": wam_tenant,
+                        "wam_username": result.account_username,
+                        "last_refreshed": time.time(),
+                    },
+                )
+                logger.info("WAM silent refresh succeeded.")
+                print("[info] Token auto-refreshed via WAM.")
+                return result.access_token
+            except WamTokenProviderError as exc:
+                raise TokenRefreshError(f"WAM auto-refresh failed: {exc}") from exc
+
+        # Token expired — try BroCI broker exchange if configured
+        broci_tenant = metadata.get("broci_tenant_id")
+        broci_rt = metadata.get("broci_broker_rt")
+        if broci_tenant and broci_rt:
+            logger.info("Access token expired — attempting BroCI silent refresh …")
+            try:
+                result = self._broci.refresh(
+                    tenant_id=broci_tenant,
+                    broker_refresh_token=broci_rt,
+                )
+                self._store.save(
+                    access_token=result.access_token,
+                    metadata={
+                        "expires_at": result.expires_at,
+                        "tenant_id": broci_tenant,
+                        "broci_tenant_id": broci_tenant,
+                        "broci_broker_rt": result.refresh_token,
+                        "last_refreshed": time.time(),
+                    },
+                )
+                logger.info("BroCI silent refresh succeeded.")
+                print("[info] Token auto-refreshed via BroCI.")
+                return result.access_token
+            except BrociTokenProviderError as exc:
+                raise TokenRefreshError(f"BroCI auto-refresh failed: {exc}") from exc
+
         raise TokenExpiredError(
-            "Access token has expired. Please paste a fresh token via option 1."
+            "Access token has expired. Use option 1 to paste a fresh token, "
+            "option 1b to enable WAM auto-refresh (Windows), "
+            "or option 1c to enable BroCI auto-refresh (cross-platform)."
         )
 
     def _load_token(self) -> tuple[str, dict]:

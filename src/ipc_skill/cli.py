@@ -63,7 +63,7 @@ def _masked_input(prompt: str) -> str:
 
 
 from ipc_skill import IPCSkillConfig, IPCExplorer
-from ipc_skill.token_manager import TokenExpiredError
+from ipc_skill.token_manager import TokenExpiredError, TokenRefreshError
 
 
 def _build_config() -> IPCSkillConfig:
@@ -148,27 +148,32 @@ def _pick_devices(ipc: IPCExplorer) -> list[dict]:
 
 
 MENU = """
-╔══════════════════════════════════════════╗
-║         IPCSkill – Device Inventory      ║
-╠══════════════════════════════════════════╣
-║  1  Store a bearer token (paste)         ║
-║  2  Get device inventory                 ║
-║  3  Get software inventory               ║
-║  q  Quit                                 ║
-╚══════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════════╗
+║                   IPCSkill – Device Inventory                     ║
+╠═══════════════════════════════════════════════════════════════════╣
+║  1   Store a bearer token (manual paste)                          ║
+║  1c  Enable BroCI auto-refresh (cross-platform, needs broker RT)  ║
+║  2   Get device inventory                                         ║
+║  3   Get software inventory                                       ║
+║  q   Quit                                                         ║
+╚═══════════════════════════════════════════════════════════════════╝
 """
 
 
 def _print_token_status(ipc: IPCExplorer) -> None:
     info = ipc.token_manager.token_info()
     if not info:
-        print("  ⚠  No token stored — use option 1 to paste a token.\n")
+        print("  ⚠  No token stored — use option 1c (recommended) or 1 to authenticate.\n")
         return
     status = "⚠  EXPIRED" if info["expired"] else "✔  Valid"
-    print(f"  Token : {status}")
-    print(f"  User  : {info['user']}")
-    print(f"  Tenant: {info['tenant']}")
-    print(f"  Expiry: {info['expires_at']} ({info['expires_in']})\n")
+    print(f"  Token        : {status}")
+    print(f"  User         : {info['user']}")
+    print(f"  Tenant       : {info['tenant']}")
+    print(f"  Expiry       : {info['expires_at']} ({info['expires_in']})")
+    print(f"  Auto-refresh : {info['auto_refresh']}")
+    if info.get("last_refreshed"):
+        print(f"  Last refresh : {info['last_refreshed']}")
+    print()
 
 
 def main() -> None:
@@ -183,11 +188,47 @@ def main() -> None:
             if choice == "q":
                 break
 
-            elif choice == "1":
+            elif choice in ("1", "1a"):
+                print("[info] Tip: run 'python capture_portal_auth.py' to extract a token from")
+                print("[info] a live Edge/Chrome session (requires --remote-debugging-port=9222).")
+                print()
                 token = _masked_input("Paste bearer token (hidden): ").strip()
                 print(f"  [received {len(token)} characters — {'✓ looks like a JWT' if token.startswith('eyJ') else '⚠ unexpected format'}]")
                 ipc.token_manager.store_token(access_token=token)
                 print("[ok] Token stored.")
+
+            elif choice == "1c":
+                import os, json as _json
+                print("[info] BroCI auto-refresh: exchanges your Azure Portal refresh token")
+                print("[info] for a fresh Intune token — works on Windows, Mac, and Linux.")
+                print("[info] After setup, tokens refresh automatically. No pasting required.")
+                print()
+                default_rt_file = "broker_rt.json"
+                if os.path.isfile(default_rt_file):
+                    rt_file = default_rt_file
+                    print(f"[info] Found {default_rt_file}")
+                else:
+                    rt_file = input("Path to broker_rt.json (run capture_portal_auth.py first): ").strip()
+                if not rt_file or not os.path.isfile(rt_file):
+                    print("[error] broker_rt.json not found.")
+                    print("[info] Run: python capture_portal_auth.py")
+                    print("[info] Then come back here — no need to paste any tokens manually.")
+                else:
+                    try:
+                        with open(rt_file) as f:
+                            broci_data = _json.load(f)
+                        tenant_id = broci_data.get("tenant_id") or input("Tenant ID (GUID): ").strip()
+                        broker_rt = broci_data["broker_refresh_token"]
+                        print("[info] Exchanging broker RT for Intune token...")
+                        resolved_user = ipc.token_manager.store_broci_auth(
+                            tenant_id=tenant_id,
+                            broker_refresh_token=broker_rt,
+                        )
+                        print(f"[ok] Authenticated as {resolved_user}.")
+                        print("[ok] Auto-refresh enabled — tokens will renew silently whenever they expire.")
+                        print("[ok] You can now use options 2 and 3 directly.")
+                    except Exception as exc:
+                        print(f"[error] BroCI setup failed: {exc}")
 
             elif choice == "2":
                 devices = _pick_devices(ipc)
@@ -315,10 +356,13 @@ def main() -> None:
 
         except TokenExpiredError:
             print("[error] Your token has expired.")
-            print("[info]  Go to https://intune.microsoft.com, open browser DevTools,")
-            print("[info]  copy a fresh Bearer token, then use option 1 to store it.")
+            print("[info]  Option 1c: BroCI auto-refresh (run capture_portal_auth.py first)")
+            print("[info]  Option 1:  Paste a fresh Bearer token manually")
+        except TokenRefreshError as exc:
+            print(f"[error] Auto-refresh failed: {exc}")
+            print("[info]  Re-run option 1c to re-authenticate.")
         except FileNotFoundError:
-            print("[error] No token stored yet — use option 1 to paste a token.")
+            print("[error] No token stored yet — use option 1c or 1 to authenticate.")
         except Exception as exc:
             print(f"[error] {exc}")
 
