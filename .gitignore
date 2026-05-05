@@ -1,8 +1,16 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-dist/
-build/
-.pytest_cache/
-.coverage
-htmlcov/
+# PowerShell
+*.psm1.bak
+*.psd1.bak
+
+# Pester test results
+testResults.xml
+TestResults/
+coverage.xml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
