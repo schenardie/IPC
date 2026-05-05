@@ -33,7 +33,7 @@ function Initialize-IPCSecretVault {
     <#
     .SYNOPSIS
         Ensures SecretManagement + SecretStore modules are installed and the
-        IPCSkill vault is registered.
+        IPCSkill vault is registered with passwordless access.
     #>
     [CmdletBinding()]
     param()
@@ -46,13 +46,20 @@ function Initialize-IPCSecretVault {
         Import-Module $mod -ErrorAction Stop
     }
 
-    if (-not (Get-SecretVault -Name $script:VAULT_NAME -ErrorAction SilentlyContinue)) {
-        $storeConfig = @{ Authentication = 'None'; Interaction = 'None'; Confirm = $false }
+    # Ensure SecretStore is configured for passwordless (non-interactive) access.
+    # If it was previously configured with a password, reset it first.
+    $storeConfig = Get-SecretStoreConfiguration -ErrorAction SilentlyContinue
+    if ($null -eq $storeConfig -or $storeConfig.Authentication -ne 'None') {
         try {
-            Set-SecretStoreConfiguration @storeConfig -Force -ErrorAction Stop
+            Reset-SecretStore -Force -PassThru -ErrorAction Stop | Out-Null
         } catch {
-            # Already configured
+            # Reset may fail if store doesn't exist yet — that's fine
         }
+        Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force
+        Write-Host "[ok] SecretStore configured for passwordless access." -ForegroundColor Green
+    }
+
+    if (-not (Get-SecretVault -Name $script:VAULT_NAME -ErrorAction SilentlyContinue)) {
         Register-SecretVault -Name $script:VAULT_NAME -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault
         Write-Host "[ok] Secret vault '$($script:VAULT_NAME)' registered." -ForegroundColor Green
     }
