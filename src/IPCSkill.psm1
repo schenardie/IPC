@@ -952,6 +952,277 @@ function Resolve-SimpleInstance {
     return $Instance
 }
 
+# ── High-level skill interface ────────────────────────────────────────────────
+
+function Invoke-IPCSkill {
+    <#
+    .SYNOPSIS
+        Single entry-point for AI agents and scripts. Combines device lookup
+        and inventory retrieval in one call.
+
+    .DESCRIPTION
+        Resolves devices by partial name, GUID, or all Windows devices, then
+        fetches the requested inventory type (hardware categories, software,
+        or device list). Returns structured objects ready for display or
+        further processing.
+
+    .PARAMETER Action
+        What to retrieve:
+          ListDevices         — Search/list managed devices
+          HardwareInventory   — Fetch hardware inventory categories
+          SoftwareInventory   — Fetch installed applications
+          ListCategories      — List available inventory categories for a device
+
+    .PARAMETER DeviceName
+        Partial device name to search for. Mutually exclusive with DeviceId
+        and AllDevices.
+
+    .PARAMETER DeviceId
+        Exact Intune device GUID. Mutually exclusive with DeviceName and
+        AllDevices.
+
+    .PARAMETER AllDevices
+        Target all Windows managed devices in the tenant.
+
+    .PARAMETER Category
+        One or more hardware inventory category IDs (e.g. 'bios', 'battery',
+        'diskDrive'). Use 'all' to fetch every available category. Only
+        applies to HardwareInventory action.
+
+    .PARAMETER Filter
+        Text filter applied to results. For SoftwareInventory, filters
+        application names/properties containing this text. For
+        HardwareInventory, filters instance property values.
+
+    .PARAMETER Top
+        Maximum number of devices to return when searching (default 100).
+
+    .EXAMPLE
+        # "Show me all MSI software on computer1"
+        Invoke-IPCSkill -Action SoftwareInventory -DeviceName 'computer1' -Filter 'msi'
+
+    .EXAMPLE
+        # "Check bios information for all devices"
+        Invoke-IPCSkill -Action HardwareInventory -AllDevices -Category 'bios'
+
+    .EXAMPLE
+        # "Full software inventory of computer2"
+        Invoke-IPCSkill -Action SoftwareInventory -DeviceName 'computer2'
+
+    .EXAMPLE
+        # "List all devices matching LAPTOP"
+        Invoke-IPCSkill -Action ListDevices -DeviceName 'LAPTOP'
+
+    .EXAMPLE
+        # "What inventory categories are available for this device?"
+        Invoke-IPCSkill -Action ListCategories -DeviceId '1904d94c-d00f-42ea-abb5-e05673c61ff2'
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet('ListDevices', 'HardwareInventory', 'SoftwareInventory', 'ListCategories')]
+        [string]$Action,
+
+        [string]$DeviceName,
+
+        [string]$DeviceId,
+
+        [switch]$AllDevices,
+
+        [string[]]$Category,
+
+        [string]$Filter,
+
+        [int]$Top = 100
+    )
+
+    # ── Validate parameter combinations ──────────────────────────────────
+    $deviceSelectors = @(
+        ($DeviceName ? 1 : 0),
+        ($DeviceId   ? 1 : 0),
+        ($AllDevices ? 1 : 0)
+    )
+    if (($deviceSelectors | Measure-Object -Sum).Sum -gt 1) {
+        throw 'Specify only one of -DeviceName, -DeviceId, or -AllDevices.'
+    }
+    if (($deviceSelectors | Measure-Object -Sum).Sum -eq 0 -and $Action -ne 'ListDevices') {
+        throw 'Specify -DeviceName, -DeviceId, or -AllDevices to identify target device(s).'
+    }
+
+    # ── Resolve devices ──────────────────────────────────────────────────
+    $devices = @()
+    $winFilter = "operatingSystem eq 'Windows'"
+
+    if ($DeviceId) {
+        $devices = @(Get-IPCManagedDevice -DeviceId $DeviceId)
+    } elseif ($AllDevices) {
+        $devices = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
+            -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
+    } elseif ($DeviceName) {
+        $devices = @(Get-IPCManagedDevices `
+            -Filter "startswith(deviceName,'$DeviceName') and $winFilter" `
+            -Select @('id', 'deviceName', 'operatingSystem', 'complianceState') `
+            -Top $Top)
+
+        if ($devices.Count -eq 0) {
+            $all = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
+                -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
+            $devices = @($all | Where-Object { $_.deviceName -like "*$DeviceName*" })
+        }
+    } elseif ($Action -eq 'ListDevices') {
+        $devices = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
+            -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
+    }
+
+    # ── Execute action ───────────────────────────────────────────────────
+    switch ($Action) {
+
+        'ListDevices' {
+            $result = @($devices | ForEach-Object {
+                @{
+                    DeviceId        = $_.id ?? $_.deviceId ?? ''
+                    DeviceName      = $_.deviceName ?? ''
+                    OperatingSystem = $_.operatingSystem ?? ''
+                    ComplianceState = $_.complianceState ?? ''
+                }
+            })
+            if ($Filter) {
+                $result = @($result | Where-Object {
+                    ($_.Values -join ' ') -match [regex]::Escape($Filter)
+                })
+            }
+            return @{
+                Action      = 'ListDevices'
+                DeviceCount = $result.Count
+                Devices     = $result
+            }
+        }
+
+        'ListCategories' {
+            if ($devices.Count -eq 0) {
+                return @{ Action = 'ListCategories'; DeviceCount = 0; Categories = @() }
+            }
+            $firstId = $devices[0].id ?? $devices[0].deviceId ?? ''
+            $cats = Get-IPCDeviceInventoryCategories -DeviceId $firstId
+            $catIds = @($cats | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
+            return @{
+                Action      = 'ListCategories'
+                DeviceId    = $firstId
+                DeviceName  = $devices[0].deviceName ?? $firstId
+                Categories  = $catIds
+            }
+        }
+
+        'HardwareInventory' {
+            if ($devices.Count -eq 0) {
+                return @{ Action = 'HardwareInventory'; DeviceCount = 0; Results = @{} }
+            }
+
+            $deviceIdToName = @{}
+            foreach ($d in $devices) {
+                $did = $d.id ?? $d.deviceId ?? ''
+                $deviceIdToName[$did] = $d.deviceName ?? $did
+            }
+            $deviceIds = @($deviceIdToName.Keys)
+
+            # Resolve categories
+            $selectedCats = @()
+            if (-not $Category -or $Category -contains 'all') {
+                $firstId = $deviceIds[0]
+                $available = Get-IPCDeviceInventoryCategories -DeviceId $firstId
+                $selectedCats = @($available | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
+            } else {
+                $selectedCats = $Category
+            }
+
+            if ($selectedCats.Count -eq 0) {
+                return @{ Action = 'HardwareInventory'; DeviceCount = $devices.Count; Results = @{} }
+            }
+
+            $batchResult = Get-IPCInventoryBatch -DeviceIds $deviceIds -Categories $selectedCats
+
+            # Structure output by device name
+            $output = @{}
+            foreach ($deviceId in $batchResult.Keys) {
+                $name = $deviceIdToName[$deviceId] ?? $deviceId
+                $output[$name] = $batchResult[$deviceId]
+            }
+
+            # Apply filter
+            if ($Filter) {
+                $filtered = @{}
+                foreach ($name in $output.Keys) {
+                    $filteredCats = @{}
+                    foreach ($cat in $output[$name].Keys) {
+                        $filteredInstances = @($output[$name][$cat] | Where-Object {
+                            ($_.Values -join ' ') -match [regex]::Escape($Filter)
+                        })
+                        if ($filteredInstances.Count -gt 0) {
+                            $filteredCats[$cat] = $filteredInstances
+                        }
+                    }
+                    if ($filteredCats.Count -gt 0) {
+                        $filtered[$name] = $filteredCats
+                    }
+                }
+                $output = $filtered
+            }
+
+            # Unwrap single device
+            $unwrapped = if ($output.Count -eq 1) { $output.Values | Select-Object -First 1 } else { $output }
+
+            return @{
+                Action      = 'HardwareInventory'
+                DeviceCount = $output.Count
+                Categories  = $selectedCats
+                Results     = $unwrapped
+            }
+        }
+
+        'SoftwareInventory' {
+            if ($devices.Count -eq 0) {
+                return @{ Action = 'SoftwareInventory'; DeviceCount = 0; Results = @{} }
+            }
+
+            $deviceIdToName = @{}
+            foreach ($d in $devices) {
+                $did = $d.id ?? $d.deviceId ?? ''
+                $deviceIdToName[$did] = $d.deviceName ?? $did
+            }
+            $deviceIds = @($deviceIdToName.Keys)
+
+            $batchResult = Get-IPCSoftwareInventoryBatch -DeviceIds $deviceIds
+
+            $output = @{}
+            foreach ($deviceId in $batchResult.Keys) {
+                $name = $deviceIdToName[$deviceId] ?? $deviceId
+                $apps = @($batchResult[$deviceId])
+
+                if ($Filter) {
+                    $apps = @($apps | Where-Object {
+                        ($_.Values -join ' ') -match [regex]::Escape($Filter)
+                    })
+                }
+
+                $output[$name] = $apps
+            }
+
+            # Unwrap single device
+            $unwrapped = if ($output.Count -eq 1) { $output.Values | Select-Object -First 1 } else { $output }
+            $totalApps = if ($unwrapped -is [array]) { $unwrapped.Count } else {
+                $s = 0; foreach ($v in $unwrapped.Values) { if ($v -is [array]) { $s += $v.Count } }; $s
+            }
+
+            return @{
+                Action          = 'SoftwareInventory'
+                DeviceCount     = $output.Count
+                ApplicationCount = $totalApps
+                Results         = $unwrapped
+            }
+        }
+    }
+}
+
 # ── Exported functions ───────────────────────────────────────────────────────
 
 Export-ModuleMember -Function @(
@@ -967,6 +1238,7 @@ Export-ModuleMember -Function @(
     'Get-IPCTokenInfo'
     'Invoke-GraphRequest'
     'Invoke-GraphBatch'
+    'Invoke-IPCSkill'
     'Get-IPCManagedDevices'
     'Get-IPCManagedDevice'
     'Get-IPCDeviceInventoryCategories'

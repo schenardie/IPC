@@ -18,6 +18,7 @@
         'Get-IPCTokenInfo'
         'Invoke-GraphRequest'
         'Invoke-GraphBatch'
+        'Invoke-IPCSkill'
         'Get-IPCManagedDevices'
         'Get-IPCManagedDevice'
         'Get-IPCDeviceInventoryCategories'

@@ -133,3 +133,25 @@ Describe 'ConvertTo-CleanInstance' {
         $result['Version'] | Should -Be '8.6.1'
     }
 }
+
+Describe 'Invoke-IPCSkill' {
+    It 'throws when multiple device selectors are provided' {
+        { Invoke-IPCSkill -Action ListDevices -DeviceName 'test' -AllDevices } | Should -Throw '*only one*'
+    }
+
+    It 'throws when no device selector is provided for non-ListDevices action' {
+        { Invoke-IPCSkill -Action SoftwareInventory } | Should -Throw '*Specify*'
+    }
+
+    It 'validates Action parameter values' {
+        { Invoke-IPCSkill -Action 'InvalidAction' -DeviceName 'test' } | Should -Throw
+    }
+
+    It 'accepts valid Action parameter values' {
+        $cmd = Get-Command Invoke-IPCSkill
+        $validValues = $cmd.Parameters['Action'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] }
+        foreach ($action in @('ListDevices', 'HardwareInventory', 'SoftwareInventory', 'ListCategories')) {
+            $validValues.ValidValues | Should -Contain $action
+        }
+    }
+}
