@@ -320,3 +320,24 @@ class TestBrociAutoRefresh:
         assert result == "wam-token"
         mock_wam.refresh.assert_called_once()
         mock_broci.refresh.assert_not_called()
+
+
+class TestClearToken:
+    def test_clear_removes_stored_token(self, config: IPCSkillConfig, tmp_path: Path):
+        manager, store = _make_manager(config, tmp_path)
+        future_ts = time.time() + 3600
+        jwt = _make_jwt({"exp": int(future_ts), "upn": "user@contoso.com", "tid": "t"})
+        store.save(jwt, metadata={"expires_at": future_ts})
+
+        assert manager.token_info() is not None
+        manager.clear_token()
+        assert manager.token_info() is None
+
+    def test_clear_removes_broci_metadata(self, config: IPCSkillConfig, tmp_path: Path):
+        manager, store = _make_manager(config, tmp_path)
+        future_ts = time.time() + 3600
+        jwt = _make_jwt({"exp": int(future_ts), "upn": "user@contoso.com", "tid": "t"})
+        store.save(jwt, metadata={"expires_at": future_ts, "broci_tenant_id": "t", "broci_broker_rt": "rt"})
+
+        manager.clear_token()
+        assert manager.token_info() is None

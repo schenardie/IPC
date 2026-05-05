@@ -104,6 +104,11 @@ class KeyringTokenStore:
                 keyring.delete_password(_SERVICE, key)
             except keyring.errors.PasswordDeleteError:
                 pass
+        # Also wipe the fallback file so load() doesn't resurrect the old token
+        try:
+            self._fallback.clear()
+        except FileNotFoundError:
+            pass
 
     @staticmethod
     def _keyring_available() -> bool:

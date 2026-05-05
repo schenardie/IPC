@@ -257,6 +257,15 @@ class TokenManager:
         )
         return upn
 
+    def clear_token(self) -> None:
+        """Remove all stored token data (access token, refresh token, metadata).
+
+        Use this to switch tenants or accounts.  After clearing, re-authenticate
+        via :meth:`store_token` (manual paste) or :meth:`store_broci_auth` (BroCI).
+        """
+        self._store.clear()
+        logger.info("Token store cleared.")
+
     def token_info(self) -> Optional[dict]:
         """Return human-readable info about the stored token, or ``None`` if none stored."""
         try:

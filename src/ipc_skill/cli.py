@@ -153,6 +153,7 @@ MENU = """
 ╠═══════════════════════════════════════════════════════════════════╣
 ║  1   Store a bearer token (manual paste)                          ║
 ║  1c  Enable BroCI auto-refresh (cross-platform, needs broker RT)  ║
+║  1x  Clear stored token (switch tenant / account)                 ║
 ║  2   Get device inventory                                         ║
 ║  3   Get software inventory                                       ║
 ║  q   Quit                                                         ║
@@ -205,20 +206,21 @@ def main() -> None:
                 print()
                 default_rt_file = "broker_rt.json"
                 if os.path.isfile(default_rt_file):
-                    rt_file = default_rt_file
-                    print(f"[info] Found {default_rt_file}")
+                    with open(default_rt_file) as f:
+                        broci_data = _json.load(f)
+                    broker_rt = broci_data.get("broker_refresh_token", "")
+                    tenant_id = broci_data.get("tenant_id", "")
+                    print(f"[info] Found {default_rt_file} — broker RT loaded.")
                 else:
-                    rt_file = input("Path to broker_rt.json (run capture_portal_auth.py first): ").strip()
-                if not rt_file or not os.path.isfile(rt_file):
-                    print("[error] broker_rt.json not found.")
-                    print("[info] Run: python capture_portal_auth.py")
-                    print("[info] Then come back here — no need to paste any tokens manually.")
+                    broker_rt = _masked_input("Paste broker refresh token (hidden): ").strip()
+                    print(f"  [received {len(broker_rt)} characters]")
+                    tenant_id = ""
+                if not tenant_id:
+                    tenant_id = input("Tenant ID (GUID): ").strip()
+                if not broker_rt:
+                    print("[error] No broker refresh token provided.")
                 else:
                     try:
-                        with open(rt_file) as f:
-                            broci_data = _json.load(f)
-                        tenant_id = broci_data.get("tenant_id") or input("Tenant ID (GUID): ").strip()
-                        broker_rt = broci_data["broker_refresh_token"]
                         print("[info] Exchanging broker RT for Intune token...")
                         resolved_user = ipc.token_manager.store_broci_auth(
                             tenant_id=tenant_id,
@@ -229,6 +231,24 @@ def main() -> None:
                         print("[ok] You can now use options 2 and 3 directly.")
                     except Exception as exc:
                         print(f"[error] BroCI setup failed: {exc}")
+
+            elif choice == "1x":
+                import os
+                info = ipc.token_manager.token_info()
+                if not info:
+                    print("[info] No token stored — nothing to clear.")
+                else:
+                    print(f"  Current token: {info['user']} / {info['tenant']}")
+                    confirm = input("Clear stored token and all auto-refresh credentials? [y/N]: ").strip().lower()
+                    if confirm == "y":
+                        ipc.token_manager.clear_token()
+                        rt_file = "broker_rt.json"
+                        if os.path.isfile(rt_file):
+                            os.remove(rt_file)
+                            print(f"[ok] {rt_file} deleted.")
+                        print("[ok] Token cleared. Run capture_portal_auth.py then use option 1c to authenticate again.")
+                    else:
+                        print("[info] Cancelled.")
 
             elif choice == "2":
                 devices = _pick_devices(ipc)
