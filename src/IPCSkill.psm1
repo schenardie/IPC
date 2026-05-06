@@ -36,13 +36,15 @@ function Initialize-IPCSecretVault {
     <#
     .SYNOPSIS
         Ensures SecretManagement + SecretStore modules are installed and the
-        IPCSkill vault is registered. If the SecretStore already has a password,
-        prompts the user to unlock it once per session.
+        IPCSkill vault is registered.
+    .DESCRIPTION
+        If the SecretStore is password-protected, SecretStore's own built-in
+        prompt will ask for the password once. After that, the timeout is
+        extended so it stays unlocked for the session.
     #>
     [CmdletBinding()]
     param()
 
-    # Only run the full init once per session
     if ($script:_vaultInitialized) { return }
 
     foreach ($mod in @('Microsoft.PowerShell.SecretManagement', 'Microsoft.PowerShell.SecretStore')) {
@@ -53,41 +55,14 @@ function Initialize-IPCSecretVault {
         Import-Module $mod -ErrorAction Stop
     }
 
+    # Check if SecretStore exists. If this is first-time setup, configure it
+    # with no password so the user isn't prompted. If it already exists with
+    # a password, leave it alone — SecretStore will prompt the user itself.
     $storeConfig = Get-SecretStoreConfiguration -ErrorAction SilentlyContinue
-
     if ($null -eq $storeConfig) {
-        # First-time setup — configure with no password and no interactive prompts
         Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force
         Write-Host "[ok] SecretStore configured." -ForegroundColor Green
-    } elseif ($storeConfig.Authentication -eq 'Password') {
-        # Existing store with password protection.
-        # Set Interaction to None so SecretStore never shows its own password
-        # prompt behind our back — we handle all prompting ourselves.
-        try {
-            Write-Host "[info] SecretStore is protected by a password." -ForegroundColor Cyan
-            $unlocked = $false
-            for ($attempt = 1; $attempt -le 3; $attempt++) {
-                $pwd = Read-Host -Prompt 'Enter SecretStore password' -AsSecureString
-                try {
-                    Unlock-SecretStore -Password $pwd -ErrorAction Stop
-                    # Extend timeout to 8 hours so it stays unlocked for the session
-                    Set-SecretStoreConfiguration -PasswordTimeout 28800 -Interaction None -Password $pwd -Confirm:$false -Force -ErrorAction SilentlyContinue
-                    $unlocked = $true
-                    break
-                } catch {
-                    if ($attempt -lt 3) {
-                        Write-Host "[warn] Incorrect password. Attempt $attempt/3." -ForegroundColor Yellow
-                    }
-                }
-            }
-            if (-not $unlocked) {
-                throw "Failed to unlock SecretStore after 3 attempts. Cannot access tokens."
-            }
-        } catch [System.Management.Automation.RuntimeException] {
-            throw
-        }
     }
-    # else: Authentication is already 'None' — nothing to do
 
     if (-not (Get-SecretVault -Name $script:VAULT_NAME -ErrorAction SilentlyContinue)) {
         Register-SecretVault -Name $script:VAULT_NAME -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault
