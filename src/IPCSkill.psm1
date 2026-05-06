@@ -244,8 +244,13 @@ function Set-IPCAccessToken {
     Set-Secret -Name $script:SECRET_ACCESS -Secret $token -Vault $script:VAULT_NAME
     Set-Secret -Name $script:SECRET_METADATA -Secret $metadata -Vault $script:VAULT_NAME
 
+    # Clear any stored refresh token and tenant to avoid cross-tenant mismatches
+    try { Set-Secret -Name $script:SECRET_REFRESH -Secret '' -Vault $script:VAULT_NAME } catch { }
+    try { Set-Secret -Name $script:SECRET_TENANT -Secret '' -Vault $script:VAULT_NAME } catch { }
+
     $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$expiresAt).UtcDateTime.ToString('yyyy-MM-dd HH:mm:ss UTC')
     Write-Host "[ok] Access token stored (expiry: $expiryUtc)." -ForegroundColor Green
+    Write-Host "[info] Refresh token cleared (use option 2 to store one for this tenant)." -ForegroundColor Cyan
 }
 
 function Set-IPCRefreshToken {
