@@ -151,16 +151,16 @@ function Select-Devices {
 
 $menu = @"
 
-╔═══════════════════════════════════════════════╗
-║          IPCSkill – Device Inventory          ║
-╠═══════════════════════════════════════════════╣
-║  1a  Store access token  (from Network tab)   ║
-║  1b  Store refresh token (from Session Storage)║
-║  1c  Clear all tokens                         ║
-║  2   Get device inventory                     ║
-║  3   Get software inventory                   ║
-║  q   Quit                                     ║
-╚═══════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════╗
+║           IPCSkill – Device Inventory            ║
+╠══════════════════════════════════════════════════╣
+║  1a  Store access token  (from Network tab)      ║
+║  1b  Store refresh token (from Session Storage)  ║
+║  1c  Clear all tokens                            ║
+║  2   Get device inventory                        ║
+║  3   Get software inventory                      ║
+║  q   Quit                                        ║
+╚══════════════════════════════════════════════════╝
 "@
 
 function Show-TokenStatus {
