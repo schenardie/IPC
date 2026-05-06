@@ -24,6 +24,7 @@ $script:SECRET_ACCESS    = 'ipc-access-token'
 $script:SECRET_REFRESH   = 'ipc-refresh-token'
 $script:SECRET_METADATA  = 'ipc-token-metadata'
 $script:SECRET_TENANT    = 'ipc-tenant-id'
+$script:SECRET_CLIENT_ID = 'ipc-client-id'
 $script:BATCH_SIZE       = 20
 $script:MAX_BATCH_RETRIES = 5
 $script:DEFAULT_RETRY_AFTER = 30
@@ -244,9 +245,10 @@ function Set-IPCAccessToken {
     Set-Secret -Name $script:SECRET_ACCESS -Secret $token -Vault $script:VAULT_NAME
     Set-Secret -Name $script:SECRET_METADATA -Secret $metadata -Vault $script:VAULT_NAME
 
-    # Clear any stored refresh token and tenant to avoid cross-tenant mismatches
+    # Clear any stored refresh token, tenant, and client ID to avoid cross-tenant mismatches
     try { Set-Secret -Name $script:SECRET_REFRESH -Secret '' -Vault $script:VAULT_NAME } catch { }
     try { Set-Secret -Name $script:SECRET_TENANT -Secret '' -Vault $script:VAULT_NAME } catch { }
+    try { Set-Secret -Name $script:SECRET_CLIENT_ID -Secret '' -Vault $script:VAULT_NAME } catch { }
 
     $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$expiresAt).UtcDateTime.ToString('yyyy-MM-dd HH:mm:ss UTC')
     Write-Host "[ok] Access token stored (expiry: $expiryUtc)." -ForegroundColor Green
@@ -262,10 +264,11 @@ function Set-IPCRefreshToken {
         Session Storage → look for an MSAL entry with credentialType "RefreshToken"
         and copy the "secret" field value.
 
-        You must also provide the tenant domain (e.g. contoso.onmicrosoft.com)
-        or tenant GUID so the refresh token is exchanged against the correct
-        Azure AD tenant. Any previously stored access token is cleared to
-        avoid cross-tenant issues.
+        You must also provide:
+        - The tenant domain (e.g. contoso.onmicrosoft.com) or tenant GUID
+        - The clientId from the same Session Storage entry
+
+        Any previously stored access token is cleared to avoid cross-tenant issues.
     #>
     [CmdletBinding()]
     param(
@@ -273,22 +276,27 @@ function Set-IPCRefreshToken {
         [string]$RefreshToken,
 
         [Parameter(Mandatory)]
-        [string]$Tenant
+        [string]$Tenant,
+
+        [Parameter(Mandatory)]
+        [string]$ClientId
     )
 
     Initialize-IPCSecretVault
 
     $token = $RefreshToken.Trim()
     $tenantValue = $Tenant.Trim()
+    $clientIdValue = $ClientId.Trim()
 
     Set-Secret -Name $script:SECRET_REFRESH -Secret $token -Vault $script:VAULT_NAME
     Set-Secret -Name $script:SECRET_TENANT -Secret $tenantValue -Vault $script:VAULT_NAME
+    Set-Secret -Name $script:SECRET_CLIENT_ID -Secret $clientIdValue -Vault $script:VAULT_NAME
 
     # Clear any existing access token to avoid cross-tenant mismatches
     try { Set-Secret -Name $script:SECRET_ACCESS -Secret '' -Vault $script:VAULT_NAME } catch { }
     try { Set-Secret -Name $script:SECRET_METADATA -Secret '' -Vault $script:VAULT_NAME } catch { }
 
-    Write-Host "[ok] Refresh token stored for tenant '$tenantValue'." -ForegroundColor Green
+    Write-Host "[ok] Refresh token stored for tenant '$tenantValue' (client: $clientIdValue)." -ForegroundColor Green
 
     try {
         $null = Update-IPCAccessTokenFromRefresh
@@ -317,8 +325,15 @@ function Update-IPCAccessTokenFromRefresh {
         if ($storedTenant) { $tenant = $storedTenant }
     } catch { }
 
+    # Use the stored client ID (must match the one that issued the refresh token)
+    $clientId = $script:INTUNE_CLIENT_ID
+    try {
+        $storedClientId = Get-Secret -Name $script:SECRET_CLIENT_ID -Vault $script:VAULT_NAME -AsPlainText -ErrorAction SilentlyContinue
+        if ($storedClientId) { $clientId = $storedClientId }
+    } catch { }
+
     $body = @{
-        client_id     = $script:INTUNE_CLIENT_ID
+        client_id     = $clientId
         grant_type    = 'refresh_token'
         refresh_token = $refreshToken
         scope         = 'https://graph.microsoft.com/.default offline_access'
