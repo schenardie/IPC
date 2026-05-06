@@ -169,7 +169,70 @@ $apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
 
 ## Usage — AI agent (Invoke-IPCSkill)
 
-`Invoke-IPCSkill` is a single entry-point function designed for AI agents. It combines device lookup and inventory retrieval in one call:
+### Quick start — importing the skill into your agent
+
+```powershell
+# 1. Import the module
+Import-Module ./src/IPCSkill.psm1
+
+# 2. Authenticate (choose one method)
+
+# Method A — Refresh token (recommended for agents, auto-refreshes for 24h)
+Set-IPCRefreshToken -RefreshToken '<secret from Session Storage>' -Tenant 'contoso.onmicrosoft.com'
+
+# Method B — Access token (quick but expires in ~1 hour, no auto-refresh)
+Set-IPCAccessToken -AccessToken 'eyJ...'
+
+# 3. You're ready — call Invoke-IPCSkill
+Invoke-IPCSkill -Action ListDevices
+```
+
+### How authentication works for agents
+
+| Scenario | What happens | What you need to do |
+|----------|-------------|-------------------|
+| **First time** | No token stored | Authenticate with Method A or B above |
+| **Within 1 hour** | Access token is valid | Nothing — calls work automatically |
+| **After 1 hour (with refresh token)** | Access token expired | Nothing — auto-refreshes silently via BroCI |
+| **After 24 hours (with refresh token)** | Refresh token expired | Re-authenticate: get a fresh refresh token from Session Storage |
+| **After 1 hour (access token only)** | Access token expired, no refresh | Re-authenticate: paste a new access token |
+| **Switching tenants** | Tokens from wrong tenant | Run `Clear-IPCTokens` then re-authenticate |
+
+### Re-authenticating when tokens expire
+
+If you're using a **refresh token** (Method A) and it's been more than 24 hours:
+
+```powershell
+# Clear the expired tokens
+Clear-IPCTokens
+
+# Get a fresh refresh token from Session Storage and store it
+Set-IPCRefreshToken -RefreshToken '<new secret>' -Tenant 'contoso.onmicrosoft.com'
+```
+
+If you're using an **access token** (Method B) and it expired:
+
+```powershell
+# Just paste a new one — it automatically replaces the old one
+Set-IPCAccessToken -AccessToken 'eyJ...'
+```
+
+### Checking token status programmatically
+
+```powershell
+$info = Get-IPCTokenInfo
+if (-not $info) {
+    Write-Host "No token — need to authenticate"
+} elseif ($info.Expired -and -not $info.HasRefresh) {
+    Write-Host "Token expired — need a fresh access token"
+} elseif ($info.Expired -and $info.HasRefresh) {
+    Write-Host "Token expired — will auto-refresh on next call"
+} else {
+    Write-Host "Token valid for $($info.ExpiresIn)"
+}
+```
+
+### Example queries
 
 ```powershell
 # "Show me all MSI software on computer1"
@@ -186,9 +249,15 @@ Invoke-IPCSkill -Action ListDevices -DeviceName 'LAPTOP'
 
 # "What inventory categories are available?"
 Invoke-IPCSkill -Action ListCategories -DeviceName 'computer1'
+
+# "Show processor and memory for all devices"
+Invoke-IPCSkill -Action HardwareInventory -AllDevices -Category 'processor','memory'
+
+# "Find Chrome across all devices"
+Invoke-IPCSkill -Action SoftwareInventory -AllDevices -Filter 'Chrome'
 ```
 
-See [SKILL.md](SKILL.md) for the full AI agent manifest with parameter reference, category list, and example query mappings.
+See [SKILL.md](SKILL.md) for the full AI agent manifest with parameter reference, category list, and natural language → function call mappings.
 
 ---
 
