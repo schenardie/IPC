@@ -211,20 +211,15 @@ while ($true) {
                 Write-Host '  1. Open https://intune.microsoft.com in your browser and sign in.'
                 Write-Host '  2. Open DevTools (F12) → Application tab → Session Storage.'
                 Write-Host '  3. Look for an MSAL entry with credentialType "RefreshToken".'
-                Write-Host '  4. Copy the "clientId" and "secret" field values.'
+                Write-Host '  4. Copy the "secret" field value.'
                 Write-Host
                 $tenantDomain = Read-Host 'Tenant domain (e.g. contoso.onmicrosoft.com) or tenant GUID'
                 if (-not $tenantDomain.Trim()) {
                     Write-Host '[warn] Tenant is required for refresh token authentication.' -ForegroundColor Yellow
                     continue
                 }
-                $clientId = Read-Host 'Client ID (from the same Session Storage entry)'
-                if (-not $clientId.Trim()) {
-                    Write-Host '[warn] Client ID is required (copy it from the Session Storage entry).' -ForegroundColor Yellow
-                    continue
-                }
                 $token = Read-MaskedInput -Prompt 'Paste refresh token secret (hidden): '
-                Set-IPCRefreshToken -RefreshToken $token.Trim() -Tenant $tenantDomain.Trim() -ClientId $clientId.Trim()
+                Set-IPCRefreshToken -RefreshToken $token.Trim() -Tenant $tenantDomain.Trim()
             }
 
             '3' {

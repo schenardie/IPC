@@ -18,13 +18,14 @@
 # ── Constants ────────────────────────────────────────────────────────────────
 
 $script:INTUNE_CLIENT_ID = '5926fc8e-304e-4f59-8bed-58ca97cc39a4'
+$script:BROKER_CLIENT_ID = 'c44b4083-3bb0-49c1-b47d-974e53cbdf3c'
+$script:BROKER_URL       = 'https://portal.azure.com/'
 $script:GRAPH_BASE_URL   = 'https://graph.microsoft.com/beta'
 $script:VAULT_NAME       = 'IPCSkillVault'
 $script:SECRET_ACCESS    = 'ipc-access-token'
 $script:SECRET_REFRESH   = 'ipc-refresh-token'
 $script:SECRET_METADATA  = 'ipc-token-metadata'
 $script:SECRET_TENANT    = 'ipc-tenant-id'
-$script:SECRET_CLIENT_ID = 'ipc-client-id'
 $script:BATCH_SIZE       = 20
 $script:MAX_BATCH_RETRIES = 5
 $script:DEFAULT_RETRY_AFTER = 30
@@ -245,10 +246,9 @@ function Set-IPCAccessToken {
     Set-Secret -Name $script:SECRET_ACCESS -Secret $token -Vault $script:VAULT_NAME
     Set-Secret -Name $script:SECRET_METADATA -Secret $metadata -Vault $script:VAULT_NAME
 
-    # Clear any stored refresh token, tenant, and client ID to avoid cross-tenant mismatches
+    # Clear any stored refresh token and tenant to avoid cross-tenant mismatches
     try { Set-Secret -Name $script:SECRET_REFRESH -Secret '' -Vault $script:VAULT_NAME } catch { }
     try { Set-Secret -Name $script:SECRET_TENANT -Secret '' -Vault $script:VAULT_NAME } catch { }
-    try { Set-Secret -Name $script:SECRET_CLIENT_ID -Secret '' -Vault $script:VAULT_NAME } catch { }
 
     $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$expiresAt).UtcDateTime.ToString('yyyy-MM-dd HH:mm:ss UTC')
     Write-Host "[ok] Access token stored (expiry: $expiryUtc)." -ForegroundColor Green
@@ -258,15 +258,15 @@ function Set-IPCAccessToken {
 function Set-IPCRefreshToken {
     <#
     .SYNOPSIS
-        Stores a refresh token (copied from browser Session Storage).
+        Stores a refresh token (copied from browser Session Storage) and
+        acquires an access token via the BroCI (Nested App Authentication) flow.
     .DESCRIPTION
         In the browser, go to intune.microsoft.com → DevTools → Application →
         Session Storage → look for an MSAL entry with credentialType "RefreshToken"
         and copy the "secret" field value.
 
-        You must also provide:
-        - The tenant domain (e.g. contoso.onmicrosoft.com) or tenant GUID
-        - The clientId from the same Session Storage entry
+        The refresh token belongs to the Azure Portal SPA (c44b4083). IPCSkill
+        exchanges it for an Intune access token using the BroCI broker flow.
 
         Any previously stored access token is cleared to avoid cross-tenant issues.
     #>
@@ -276,31 +276,26 @@ function Set-IPCRefreshToken {
         [string]$RefreshToken,
 
         [Parameter(Mandatory)]
-        [string]$Tenant,
-
-        [Parameter(Mandatory)]
-        [string]$ClientId
+        [string]$Tenant
     )
 
     Initialize-IPCSecretVault
 
     $token = $RefreshToken.Trim()
     $tenantValue = $Tenant.Trim()
-    $clientIdValue = $ClientId.Trim()
 
     Set-Secret -Name $script:SECRET_REFRESH -Secret $token -Vault $script:VAULT_NAME
     Set-Secret -Name $script:SECRET_TENANT -Secret $tenantValue -Vault $script:VAULT_NAME
-    Set-Secret -Name $script:SECRET_CLIENT_ID -Secret $clientIdValue -Vault $script:VAULT_NAME
 
     # Clear any existing access token to avoid cross-tenant mismatches
     try { Set-Secret -Name $script:SECRET_ACCESS -Secret '' -Vault $script:VAULT_NAME } catch { }
     try { Set-Secret -Name $script:SECRET_METADATA -Secret '' -Vault $script:VAULT_NAME } catch { }
 
-    Write-Host "[ok] Refresh token stored for tenant '$tenantValue' (client: $clientIdValue)." -ForegroundColor Green
+    Write-Host "[ok] Refresh token stored for tenant '$tenantValue'." -ForegroundColor Green
 
     try {
         $null = Update-IPCAccessTokenFromRefresh
-        Write-Host "[ok] Access token acquired from refresh token." -ForegroundColor Green
+        Write-Host "[ok] Access token acquired via BroCI exchange." -ForegroundColor Green
     } catch {
         Write-Warning "Could not acquire access token from refresh token: $_"
         Write-Host "[info] You may need to also store an access token (option 1) or check the refresh token." -ForegroundColor Yellow
@@ -310,7 +305,13 @@ function Set-IPCRefreshToken {
 function Update-IPCAccessTokenFromRefresh {
     <#
     .SYNOPSIS
-        Uses the stored refresh token to acquire a fresh access token.
+        Exchanges the stored broker refresh token for a fresh Intune access
+        token via the BroCI (Nested App Authentication) flow.
+    .DESCRIPTION
+        The refresh token belongs to the Azure Portal SPA (c44b4083).
+        BroCI exchanges it for an Intune access token (5926fc8e) by passing
+        broker parameters and Origin/Referer headers that satisfy the SPA
+        cross-origin restriction.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -318,37 +319,50 @@ function Update-IPCAccessTokenFromRefresh {
 
     $refreshToken = Get-Secret -Name $script:SECRET_REFRESH -Vault $script:VAULT_NAME -AsPlainText -ErrorAction Stop
 
-    # Use the explicitly stored tenant; fall back to 'common'
     $tenant = 'common'
     try {
         $storedTenant = Get-Secret -Name $script:SECRET_TENANT -Vault $script:VAULT_NAME -AsPlainText -ErrorAction SilentlyContinue
         if ($storedTenant) { $tenant = $storedTenant }
     } catch { }
 
-    # Use the stored client ID (must match the one that issued the refresh token)
-    $clientId = $script:INTUNE_CLIENT_ID
-    try {
-        $storedClientId = Get-Secret -Name $script:SECRET_CLIENT_ID -Vault $script:VAULT_NAME -AsPlainText -ErrorAction SilentlyContinue
-        if ($storedClientId) { $clientId = $storedClientId }
-    } catch { }
+    $brokerHost = ([System.Uri]$script:BROKER_URL).Host
 
+    # BroCI POST body: target app = Intune, broker = Azure Portal
     $body = @{
-        client_id     = $clientId
-        grant_type    = 'refresh_token'
-        refresh_token = $refreshToken
-        scope         = 'https://graph.microsoft.com/.default offline_access'
+        grant_type       = 'refresh_token'
+        client_id        = $script:INTUNE_CLIENT_ID
+        scope            = 'https://graph.microsoft.com/.default'
+        refresh_token    = $refreshToken
+        redirect_uri     = "brk-$($script:BROKER_CLIENT_ID)://$brokerHost"
+        brk_client_id    = $script:BROKER_CLIENT_ID
+        brk_redirect_uri = $script:BROKER_URL
     }
 
-    $response = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" `
-        -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
+    # Origin + Referer headers required to satisfy the SPA cross-origin check
+    $headers = @{
+        'Content-Type' = 'application/x-www-form-urlencoded'
+        Origin          = $script:BROKER_URL.TrimEnd('/')
+        Referer         = $script:BROKER_URL
+        'User-Agent'    = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0'
+    }
+
+    $response = Invoke-RestMethod `
+        -Uri "https://login.microsoftonline.com/$tenant/oauth2/v2.0/token" `
+        -Method POST -Body $body -Headers $headers -ErrorAction Stop
 
     $accessToken = $response.access_token
+    if (-not $accessToken) {
+        $err = $response.error ?? 'unknown_error'
+        $desc = $response.error_description ?? ''
+        throw "BroCI token exchange failed: $err — $desc"
+    }
+
     $payload = ConvertFrom-JwtPayload -Token $accessToken
 
     $expiresAt = if ($payload.ContainsKey('exp')) {
         [double]$payload['exp']
     } else {
-        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + $response.expires_in
+        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + ($response.expires_in ?? 3600)
     }
 
     $metadata = @{ expires_at = $expiresAt } | ConvertTo-Json -Compress
@@ -356,6 +370,7 @@ function Update-IPCAccessTokenFromRefresh {
     Set-Secret -Name $script:SECRET_ACCESS -Secret $accessToken -Vault $script:VAULT_NAME
     Set-Secret -Name $script:SECRET_METADATA -Secret $metadata -Vault $script:VAULT_NAME
 
+    # Store rotated refresh token (SPA tokens rotate on each use)
     if ($response.refresh_token) {
         Set-Secret -Name $script:SECRET_REFRESH -Secret $response.refresh_token -Vault $script:VAULT_NAME
     }
