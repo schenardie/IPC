@@ -247,8 +247,8 @@ function Set-IPCAccessToken {
     Set-Secret -Name $script:SECRET_METADATA -Secret $metadata -Vault $script:VAULT_NAME
 
     # Clear any stored refresh token and tenant to avoid cross-tenant mismatches
-    try { Set-Secret -Name $script:SECRET_REFRESH -Secret '' -Vault $script:VAULT_NAME } catch { }
-    try { Set-Secret -Name $script:SECRET_TENANT -Secret '' -Vault $script:VAULT_NAME } catch { }
+    try { Remove-Secret -Name $script:SECRET_REFRESH -Vault $script:VAULT_NAME } catch { }
+    try { Remove-Secret -Name $script:SECRET_TENANT -Vault $script:VAULT_NAME } catch { }
 
     $expiryUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$expiresAt).UtcDateTime.ToString('yyyy-MM-dd HH:mm:ss UTC')
     Write-Host "[ok] Access token stored (expiry: $expiryUtc)." -ForegroundColor Green
@@ -288,8 +288,8 @@ function Set-IPCRefreshToken {
     Set-Secret -Name $script:SECRET_TENANT -Secret $tenantValue -Vault $script:VAULT_NAME
 
     # Clear any existing access token to avoid cross-tenant mismatches
-    try { Set-Secret -Name $script:SECRET_ACCESS -Secret '' -Vault $script:VAULT_NAME } catch { }
-    try { Set-Secret -Name $script:SECRET_METADATA -Secret '' -Vault $script:VAULT_NAME } catch { }
+    try { Remove-Secret -Name $script:SECRET_ACCESS -Vault $script:VAULT_NAME } catch { }
+    try { Remove-Secret -Name $script:SECRET_METADATA -Vault $script:VAULT_NAME } catch { }
 
     Write-Host "[ok] Refresh token stored for tenant '$tenantValue'." -ForegroundColor Green
 

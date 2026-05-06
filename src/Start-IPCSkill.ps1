@@ -227,10 +227,10 @@ while ($true) {
             '1c' {
                 $confirm = Read-Host 'Clear all stored tokens? [y/N]'
                 if ($confirm.Trim().ToLower() -eq 'y') {
-                    try { Set-Secret -Name $script:SECRET_ACCESS -Secret '' -Vault $script:VAULT_NAME } catch { }
-                    try { Set-Secret -Name $script:SECRET_REFRESH -Secret '' -Vault $script:VAULT_NAME } catch { }
-                    try { Set-Secret -Name $script:SECRET_METADATA -Secret '' -Vault $script:VAULT_NAME } catch { }
-                    try { Set-Secret -Name $script:SECRET_TENANT -Secret '' -Vault $script:VAULT_NAME } catch { }
+                    try { Remove-Secret -Name $script:SECRET_ACCESS -Vault $script:VAULT_NAME } catch { }
+                    try { Remove-Secret -Name $script:SECRET_REFRESH -Vault $script:VAULT_NAME } catch { }
+                    try { Remove-Secret -Name $script:SECRET_METADATA -Vault $script:VAULT_NAME } catch { }
+                    try { Remove-Secret -Name $script:SECRET_TENANT -Vault $script:VAULT_NAME } catch { }
                     Write-Host '[ok] All tokens cleared.' -ForegroundColor Green
                 } else {
                     Write-Host '[info] Cancelled.' -ForegroundColor Cyan
