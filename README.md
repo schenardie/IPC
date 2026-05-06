@@ -11,13 +11,15 @@ No Azure app registration is required. IPCSkill uses Microsoft Intune's own well
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Authentication](#authentication)
-  - [Option 1 — Access token (from Network tab)](#option-1--access-token-from-network-tab)
-  - [Option 2 — Refresh token (from Session Storage)](#option-2--refresh-token-from-session-storage)
+  - [Option 1a — Access token (from Network tab)](#option-1a--access-token-from-network-tab)
+  - [Option 1b — Refresh token (from Session Storage)](#option-1b--refresh-token-from-session-storage)
+  - [Option 1c — Clear all tokens](#option-1c--clear-all-tokens)
 - [Usage — CLI](#usage--cli)
   - [Menu options](#menu-options)
   - [Device inventory](#device-inventory)
   - [Software inventory](#software-inventory)
 - [Usage — PowerShell module](#usage--powershell-module)
+- [Usage — AI agent (Invoke-IPCSkill)](#usage--ai-agent-invoke-ipcskill)
 - [Running tests](#running-tests)
 - [Permissions](#permissions)
 
@@ -31,7 +33,7 @@ No Azure app registration is required. IPCSkill uses Microsoft Intune's own well
   - `Microsoft.PowerShell.SecretManagement`
   - `Microsoft.PowerShell.SecretStore`
 
-> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), IPCSkill will detect it and prompt you to enter your existing password to unlock the store. If this is your first time using SecretStore, IPCSkill configures it as passwordless automatically.
+> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), SecretStore will prompt you to enter your existing password once per session. If this is your first time using SecretStore, IPCSkill configures it as passwordless automatically.
 
 ---
 
@@ -48,26 +50,34 @@ No build step required — run the CLI directly or import the module.
 
 ## Authentication
 
-IPCSkill supports two authentication methods. Both are based on tokens obtained from a browser session against Intune.
+IPCSkill supports two authentication methods. Only one is active at a time — storing a new token clears the other to prevent cross-tenant issues.
 
-### Option 1 — Access token (from Network tab)
+### Option 1a — Access token (from Network tab)
 
-Short-lived token that lasts until it expires (typically ~1 hour).
+Short-lived token that lasts until it expires (typically ~1 hour). No auto-refresh.
 
 1. Open [https://intune.microsoft.com](https://intune.microsoft.com) in your browser and sign in.
 2. Open browser DevTools (F12) → **Network** tab.
 3. Filter for requests to `graph.microsoft.com` and copy the `Authorization: Bearer <token>` value.
-4. Start IPCSkill and use **option 1** to paste the token.
+4. Start IPCSkill and use **option 1a** to paste the token.
 
-### Option 2 — Refresh token (from Session Storage)
+### Option 1b — Refresh token (from Session Storage)
 
-Long-lived token that allows IPCSkill to automatically acquire fresh access tokens.
+Long-lived token that allows IPCSkill to automatically acquire fresh access tokens via the BroCI (Nested App Authentication) flow. As long as you refresh at least once every 24 hours, the session stays alive indefinitely.
 
 1. Open [https://intune.microsoft.com](https://intune.microsoft.com) in your browser and sign in.
 2. Open browser DevTools (F12) → **Application** tab → **Session Storage**.
 3. Look for an MSAL entry with `credentialType: "RefreshToken"`.
 4. Copy the `secret` field value.
-5. Start IPCSkill and use **option 2** to paste the refresh token.
+5. Start IPCSkill and use **option 1b**.
+6. Enter your tenant domain (e.g. `contoso.onmicrosoft.com`) or tenant GUID.
+7. Paste the refresh token secret.
+
+IPCSkill exchanges the refresh token for a fresh Intune access token using the Azure Portal as a broker. The refresh token is rotated on each exchange, so the stored token is always up to date.
+
+### Option 1c — Clear all tokens
+
+Removes all stored tokens (access, refresh, metadata, tenant) from the vault. Use this when switching tenants or accounts.
 
 Tokens are stored securely using the PowerShell `SecretStore` vault (encrypted, cross-platform).
 
@@ -82,20 +92,31 @@ Tokens are stored securely using the PowerShell `SecretStore` vault (encrypted, 
 ### Menu options
 
 ```
-╔═══════════════════════════════════════════════╗
-║          IPCSkill – Device Inventory          ║
-╠═══════════════════════════════════════════════╣
-║  1  Store access token  (from Network tab)    ║
-║  2  Store refresh token (from Session Storage)║
-║  3  Get device inventory                      ║
-║  4  Get software inventory                    ║
-║  q  Quit                                      ║
-╚═══════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════╗
+║           IPCSkill – Device Inventory            ║
+╠══════════════════════════════════════════════════╣
+║  1a  Store access token  (from Network tab)      ║
+║  1b  Store refresh token (from Session Storage)  ║
+║  1c  Clear all tokens                            ║
+║  2   Get device inventory                        ║
+║  3   Get software inventory                      ║
+║  q   Quit                                        ║
+╚══════════════════════════════════════════════════╝
+```
+
+The status display shows the current token state:
+
+```
+  Status : ✔  Valid
+  Type   : Refresh (auto-refresh enabled)
+  User   : admin@contoso.onmicrosoft.com
+  Tenant : 73925f60-2387-41d1-a78c-d27c42472f24
+  Expiry : 2026-05-06 02:10:01 UTC (1h 10m)
 ```
 
 ### Device inventory
 
-Option **3** lets you:
+Option **2** lets you:
 
 1. Search for a Windows device by partial name (or paste a device GUID directly).
 2. Choose one device or all matching devices.
@@ -106,7 +127,7 @@ Results are printed as JSON and can optionally be copied to the clipboard.
 
 ### Software inventory
 
-Option **4** queries the `ApplicationProperties` inventory category, which returns all installed applications on a device. It uses the Graph endpoint:
+Option **3** queries the `ApplicationProperties` inventory category, which returns all installed applications on a device. It uses the Graph endpoint:
 
 ```
 GET /beta/deviceManagement/managedDevices('{id}')/deviceInventories('ApplicationProperties')
@@ -122,11 +143,14 @@ Results are printed as JSON (one object per installed application) and can optio
 ```powershell
 Import-Module ./src/IPCSkill.psm1
 
-# Store a token (retrieved from browser DevTools)
+# Store an access token (retrieved from browser DevTools Network tab)
 Set-IPCAccessToken -AccessToken 'eyJ...'
 
-# Or store a refresh token for auto-refresh
-Set-IPCRefreshToken -RefreshToken '<secret from Session Storage>'
+# Or store a refresh token for auto-refresh (from Session Storage)
+Set-IPCRefreshToken -RefreshToken '<secret from Session Storage>' -Tenant 'contoso.onmicrosoft.com'
+
+# Clear all tokens (e.g. when switching tenants)
+Clear-IPCTokens
 
 # List available inventory categories for a device
 $categories = Get-IPCDeviceInventoryCategories -DeviceId 'your-device-guid'
@@ -140,6 +164,31 @@ $battery | ConvertTo-Json -Depth 10
 $apps = Get-IPCSoftwareInventory -DeviceId 'your-device-guid'
 $apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
 ```
+
+---
+
+## Usage — AI agent (Invoke-IPCSkill)
+
+`Invoke-IPCSkill` is a single entry-point function designed for AI agents. It combines device lookup and inventory retrieval in one call:
+
+```powershell
+# "Show me all MSI software on computer1"
+Invoke-IPCSkill -Action SoftwareInventory -DeviceName 'computer1' -Filter 'msi'
+
+# "Check BIOS info for all devices"
+Invoke-IPCSkill -Action HardwareInventory -AllDevices -Category 'bios'
+
+# "Full software inventory of computer2"
+Invoke-IPCSkill -Action SoftwareInventory -DeviceName 'computer2'
+
+# "List all devices matching LAPTOP"
+Invoke-IPCSkill -Action ListDevices -DeviceName 'LAPTOP'
+
+# "What inventory categories are available?"
+Invoke-IPCSkill -Action ListCategories -DeviceName 'computer1'
+```
+
+See [SKILL.md](SKILL.md) for the full AI agent manifest with parameter reference, category list, and example query mappings.
 
 ---
 
@@ -157,6 +206,8 @@ Invoke-Pester ./tests/IPCSkill.Tests.ps1 -Output Detailed
 ## Permissions
 
 IPCSkill uses Microsoft Intune's own public client ID (`5926fc8e-304e-4f59-8bed-58ca97cc39a4`). No custom Azure app registration is needed.
+
+The refresh token flow uses the Azure Portal application (`c44b4083-3bb0-49c1-b47d-974e53cbdf3c`) as a broker via the BroCI (Nested App Authentication) exchange.
 
 The signed-in user must have at least the **Microsoft Intune Read Only Operator** (or equivalent) role in Entra ID to query device inventory data.
 
