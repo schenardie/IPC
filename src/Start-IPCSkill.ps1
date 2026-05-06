@@ -154,28 +154,29 @@ $menu = @"
 ╔═══════════════════════════════════════════════╗
 ║          IPCSkill – Device Inventory          ║
 ╠═══════════════════════════════════════════════╣
-║  1  Store access token  (from Network tab)    ║
-║  2  Store refresh token (from Session Storage)║
-║  3  Get device inventory                      ║
-║  4  Get software inventory                    ║
-║  q  Quit                                      ║
+║  1a  Store access token  (from Network tab)   ║
+║  1b  Store refresh token (from Session Storage)║
+║  1c  Clear all tokens                         ║
+║  2   Get device inventory                     ║
+║  3   Get software inventory                   ║
+║  q   Quit                                     ║
 ╚═══════════════════════════════════════════════╝
 "@
 
 function Show-TokenStatus {
     $info = Get-IPCTokenInfo
     if (-not $info) {
-        Write-Host '  ⚠  No token stored — use option 1 or 2 to authenticate.' -ForegroundColor Yellow
+        Write-Host '  ⚠  No token stored — use option 1a or 1b to authenticate.' -ForegroundColor Yellow
         Write-Host
         return
     }
     $status = if ($info.Expired) { '⚠  EXPIRED' } else { '✔  Valid' }
-    $refreshStatus = if ($info.HasRefresh) { '✔  Available (auto-refresh enabled)' } else { '✗  Not stored' }
-    Write-Host "  Token   : $status"
+    $tokenType = if ($info.HasRefresh) { 'Refresh (auto-refresh enabled)' } else { 'Access (manual)' }
+    Write-Host "  Status  : $status"
+    Write-Host "  Type    : $tokenType"
     Write-Host "  User    : $($info.User)"
     Write-Host "  Tenant  : $($info.Tenant)"
     Write-Host "  Expiry  : $($info.ExpiresAt) ($($info.ExpiresIn))"
-    Write-Host "  Refresh : $refreshStatus"
     Write-Host
 }
 
@@ -198,7 +199,7 @@ while ($true) {
         switch ($choice) {
             'q' { exit 0 }
 
-            '1' {
+            '1a' {
                 $token = Read-MaskedInput -Prompt 'Paste bearer token (hidden): '
                 $tokenStr = $token.Trim()
                 $normalized = Resolve-AccessToken -RawToken $tokenStr
@@ -207,7 +208,7 @@ while ($true) {
                 Set-IPCAccessToken -AccessToken $tokenStr
             }
 
-            '2' {
+            '1b' {
                 Write-Host 'How to get the refresh token:' -ForegroundColor Cyan
                 Write-Host '  1. Open https://intune.microsoft.com in your browser and sign in.'
                 Write-Host '  2. Open DevTools (F12) → Application tab → Session Storage.'
@@ -223,7 +224,20 @@ while ($true) {
                 Set-IPCRefreshToken -RefreshToken $token.Trim() -Tenant $tenantDomain.Trim()
             }
 
-            '3' {
+            '1c' {
+                $confirm = Read-Host 'Clear all stored tokens? [y/N]'
+                if ($confirm.Trim().ToLower() -eq 'y') {
+                    try { Set-Secret -Name $script:SECRET_ACCESS -Secret '' -Vault $script:VAULT_NAME } catch { }
+                    try { Set-Secret -Name $script:SECRET_REFRESH -Secret '' -Vault $script:VAULT_NAME } catch { }
+                    try { Set-Secret -Name $script:SECRET_METADATA -Secret '' -Vault $script:VAULT_NAME } catch { }
+                    try { Set-Secret -Name $script:SECRET_TENANT -Secret '' -Vault $script:VAULT_NAME } catch { }
+                    Write-Host '[ok] All tokens cleared.' -ForegroundColor Green
+                } else {
+                    Write-Host '[info] Cancelled.' -ForegroundColor Cyan
+                }
+            }
+
+            '2' {
                 $devices = Select-Devices
                 if ($devices.Count -eq 0) { continue }
 
@@ -322,7 +336,7 @@ while ($true) {
                 }
             }
 
-            '4' {
+            '3' {
                 $devices = Select-Devices
                 if ($devices.Count -eq 0) { continue }
 
@@ -376,9 +390,9 @@ while ($true) {
     } catch {
         if ($_ -match 'expired') {
             Write-Host '[error] Your token has expired.' -ForegroundColor Red
-            Write-Host '[info]  Use option 1 to paste a fresh access token, or option 2 to store a refresh token.' -ForegroundColor Cyan
+            Write-Host '[info]  Use option 1a to paste a fresh access token, or option 1b to store a refresh token.' -ForegroundColor Cyan
         } elseif ($_ -match 'No token') {
-            Write-Host '[error] No token stored yet — use option 1 or 2 to authenticate.' -ForegroundColor Red
+            Write-Host '[error] No token stored yet — use option 1a or 1b to authenticate.' -ForegroundColor Red
         } else {
             Write-Host "[error] $_" -ForegroundColor Red
         }
