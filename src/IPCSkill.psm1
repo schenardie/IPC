@@ -1284,6 +1284,23 @@ function Invoke-IPCSkill {
     }
 }
 
+# ── Token Cleanup ────────────────────────────────────────────────────────────
+
+function Clear-IPCTokens {
+    <#
+    .SYNOPSIS
+        Removes all stored tokens (access, refresh, metadata, tenant) from the vault.
+    #>
+    [CmdletBinding()]
+    param()
+
+    Initialize-IPCSecretVault
+
+    foreach ($name in @($script:SECRET_ACCESS, $script:SECRET_REFRESH, $script:SECRET_METADATA, $script:SECRET_TENANT)) {
+        try { Remove-Secret -Name $name -Vault $script:VAULT_NAME -ErrorAction Stop } catch { }
+    }
+}
+
 # ── Exported functions ───────────────────────────────────────────────────────
 
 Export-ModuleMember -Function @(
@@ -1297,6 +1314,7 @@ Export-ModuleMember -Function @(
     'Update-IPCAccessTokenFromRefresh'
     'Get-IPCValidToken'
     'Get-IPCTokenInfo'
+    'Clear-IPCTokens'
     'Invoke-GraphRequest'
     'Invoke-GraphBatch'
     'Invoke-IPCSkill'
