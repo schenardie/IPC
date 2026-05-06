@@ -31,6 +31,8 @@ No Azure app registration is required. IPCSkill uses Microsoft Intune's own well
   - `Microsoft.PowerShell.SecretManagement`
   - `Microsoft.PowerShell.SecretStore`
 
+> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), IPCSkill will detect it and prompt you to enter your existing password to unlock the store. If this is your first time using SecretStore, IPCSkill configures it as passwordless automatically.
+
 ---
 
 ## Installation

@@ -33,7 +33,8 @@ function Initialize-IPCSecretVault {
     <#
     .SYNOPSIS
         Ensures SecretManagement + SecretStore modules are installed and the
-        IPCSkill vault is registered with passwordless access.
+        IPCSkill vault is registered. If the SecretStore already has a password,
+        prompts the user to unlock it.
     #>
     [CmdletBinding()]
     param()
@@ -46,18 +47,33 @@ function Initialize-IPCSecretVault {
         Import-Module $mod -ErrorAction Stop
     }
 
-    # Ensure SecretStore is configured for passwordless (non-interactive) access.
-    # If it was previously configured with a password, reset it first.
     $storeConfig = Get-SecretStoreConfiguration -ErrorAction SilentlyContinue
-    if ($null -eq $storeConfig -or $storeConfig.Authentication -ne 'None') {
-        try {
-            Reset-SecretStore -Force -PassThru -ErrorAction Stop | Out-Null
-        } catch {
-            # Reset may fail if store doesn't exist yet — that's fine
-        }
+
+    if ($null -eq $storeConfig) {
+        # First-time setup — configure passwordless
         Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force
-        Write-Host "[ok] SecretStore configured for passwordless access." -ForegroundColor Green
+        Write-Host "[ok] SecretStore configured (passwordless)." -ForegroundColor Green
+    } elseif ($storeConfig.Authentication -eq 'Password') {
+        # Existing store with password — unlock it
+        Write-Host "[info] SecretStore is protected by a password." -ForegroundColor Cyan
+        $unlocked = $false
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                $pwd = Read-Host -Prompt 'Enter SecretStore password' -AsSecureString
+                Unlock-SecretStore -Password $pwd -ErrorAction Stop
+                $unlocked = $true
+                break
+            } catch {
+                if ($attempt -lt 3) {
+                    Write-Host "[warn] Incorrect password. Attempt $attempt/3." -ForegroundColor Yellow
+                }
+            }
+        }
+        if (-not $unlocked) {
+            throw "Failed to unlock SecretStore after 3 attempts. Cannot access tokens."
+        }
     }
+    # else: Authentication is already 'None' — nothing to do
 
     if (-not (Get-SecretVault -Name $script:VAULT_NAME -ErrorAction SilentlyContinue)) {
         Register-SecretVault -Name $script:VAULT_NAME -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault

@@ -16,6 +16,8 @@ Set-IPCRefreshToken -RefreshToken '<secret from browser Session Storage>'
 Set-IPCAccessToken -AccessToken '<bearer token from browser Network tab>'
 ```
 
+> **Note:** Tokens are stored securely in the PowerShell SecretStore. If your SecretStore is already configured with a password, you will be prompted to enter it on first use.
+
 ## Invoke-IPCSkill Parameters
 
 | Parameter    | Type     | Required | Description |
