@@ -23,6 +23,7 @@ $script:VAULT_NAME       = 'IPCSkillVault'
 $script:SECRET_ACCESS    = 'ipc-access-token'
 $script:SECRET_REFRESH   = 'ipc-refresh-token'
 $script:SECRET_METADATA  = 'ipc-token-metadata'
+$script:SECRET_TENANT    = 'ipc-tenant-id'
 $script:BATCH_SIZE       = 20
 $script:MAX_BATCH_RETRIES = 5
 $script:DEFAULT_RETRY_AFTER = 30
@@ -255,19 +256,34 @@ function Set-IPCRefreshToken {
         In the browser, go to intune.microsoft.com → DevTools → Application →
         Session Storage → look for an MSAL entry with credentialType "RefreshToken"
         and copy the "secret" field value.
+
+        You must also provide the tenant domain (e.g. contoso.onmicrosoft.com)
+        or tenant GUID so the refresh token is exchanged against the correct
+        Azure AD tenant. Any previously stored access token is cleared to
+        avoid cross-tenant issues.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
-        [string]$RefreshToken
+        [string]$RefreshToken,
+
+        [Parameter(Mandatory)]
+        [string]$Tenant
     )
 
     Initialize-IPCSecretVault
 
     $token = $RefreshToken.Trim()
+    $tenantValue = $Tenant.Trim()
 
     Set-Secret -Name $script:SECRET_REFRESH -Secret $token -Vault $script:VAULT_NAME
-    Write-Host "[ok] Refresh token stored." -ForegroundColor Green
+    Set-Secret -Name $script:SECRET_TENANT -Secret $tenantValue -Vault $script:VAULT_NAME
+
+    # Clear any existing access token to avoid cross-tenant mismatches
+    try { Set-Secret -Name $script:SECRET_ACCESS -Secret '' -Vault $script:VAULT_NAME } catch { }
+    try { Set-Secret -Name $script:SECRET_METADATA -Secret '' -Vault $script:VAULT_NAME } catch { }
+
+    Write-Host "[ok] Refresh token stored for tenant '$tenantValue'." -ForegroundColor Green
 
     try {
         $null = Update-IPCAccessTokenFromRefresh
@@ -289,15 +305,11 @@ function Update-IPCAccessTokenFromRefresh {
 
     $refreshToken = Get-Secret -Name $script:SECRET_REFRESH -Vault $script:VAULT_NAME -AsPlainText -ErrorAction Stop
 
+    # Use the explicitly stored tenant; fall back to 'common'
     $tenant = 'common'
     try {
-        $existingToken = Get-Secret -Name $script:SECRET_ACCESS -Vault $script:VAULT_NAME -AsPlainText -ErrorAction SilentlyContinue
-        if ($existingToken) {
-            $payload = ConvertFrom-JwtPayload -Token $existingToken
-            if ($payload.ContainsKey('tid')) {
-                $tenant = $payload['tid']
-            }
-        }
+        $storedTenant = Get-Secret -Name $script:SECRET_TENANT -Vault $script:VAULT_NAME -AsPlainText -ErrorAction SilentlyContinue
+        if ($storedTenant) { $tenant = $storedTenant }
     } catch { }
 
     $body = @{

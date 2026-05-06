@@ -213,8 +213,13 @@ while ($true) {
                 Write-Host '  3. Look for an MSAL entry with credentialType "RefreshToken".'
                 Write-Host '  4. Copy the "secret" field value.'
                 Write-Host
+                $tenantDomain = Read-Host 'Tenant domain (e.g. contoso.onmicrosoft.com) or tenant GUID'
+                if (-not $tenantDomain.Trim()) {
+                    Write-Host '[warn] Tenant is required for refresh token authentication.' -ForegroundColor Yellow
+                    continue
+                }
                 $token = Read-MaskedInput -Prompt 'Paste refresh token (hidden): '
-                Set-IPCRefreshToken -RefreshToken $token.Trim()
+                Set-IPCRefreshToken -RefreshToken $token.Trim() -Tenant $tenantDomain.Trim()
             }
 
             '3' {
