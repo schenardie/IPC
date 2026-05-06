@@ -50,8 +50,8 @@ Install-Module -Name IPC -Scope CurrentUser
 ### From source
 
 ```powershell
-git clone https://github.com/schenardie/IPCSkill.git
-cd IPCSkill
+git clone https://github.com/schenardie/IPC.git
+cd IPC
 ```
 
 No build step required — run the CLI directly or import the module.
@@ -288,7 +288,7 @@ Invoke-Pester ./tests/IPC.Tests.ps1 -Output Detailed
 
 ## Permissions
 
-IPCSkill uses Microsoft Intune's own public client ID (`5926fc8e-304e-4f59-8bed-58ca97cc39a4`). No custom Azure app registration is needed.
+IPC uses Microsoft Intune's own public client ID (`5926fc8e-304e-4f59-8bed-58ca97cc39a4`). No custom Azure app registration is needed.
 
 The refresh token flow uses the Azure Portal application (`c44b4083-3bb0-49c1-b47d-974e53cbdf3c`) as a broker via the BroCI (Nested App Authentication) exchange.
 
