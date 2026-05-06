@@ -201,7 +201,8 @@ while ($true) {
             '1' {
                 $token = Read-MaskedInput -Prompt 'Paste bearer token (hidden): '
                 $tokenStr = $token.Trim()
-                $format = if ($tokenStr.StartsWith('eyJ')) { '✓ looks like a JWT' } else { '⚠ unexpected format' }
+                $normalized = Resolve-AccessToken -RawToken $tokenStr
+                $format = if ($normalized.StartsWith('eyJ')) { '✓ looks like a JWT' } else { '⚠ unexpected format' }
                 Write-Host "  [received $($tokenStr.Length) characters — $format]"
                 Set-IPCAccessToken -AccessToken $tokenStr
             }
