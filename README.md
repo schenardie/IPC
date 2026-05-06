@@ -1,8 +1,10 @@
-# IPCSkill
+# IPC
 
-**Intune Properties Catalog Skill** — an interactive CLI and PowerShell module for querying hardware and software inventory from Intune managed devices via the Microsoft Graph beta API.
+[![PSGallery](https://img.shields.io/powershellgallery/v/IPC?label=PSGallery&logo=powershell)](https://www.powershellgallery.com/packages/IPC)
 
-No Azure app registration is required. IPCSkill uses Microsoft Intune's own well-known public client ID, so it works with any Entra ID tenant where a user holds at least the **Intune Read Only** role.
+**IPC (Intune Properties Catalog)** — an interactive CLI and PowerShell module for querying hardware and software inventory from Intune managed devices via the Microsoft Graph beta API.
+
+No Azure app registration is required. IPC uses Microsoft Intune's own well-known public client ID, so it works with any Entra ID tenant where a user holds at least the **Intune Read Only** role.
 
 ---
 
@@ -33,11 +35,19 @@ No Azure app registration is required. IPCSkill uses Microsoft Intune's own well
   - `Microsoft.PowerShell.SecretManagement`
   - `Microsoft.PowerShell.SecretStore`
 
-> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), SecretStore will prompt you to enter your existing password once per session. If this is your first time using SecretStore, IPCSkill configures it as passwordless automatically.
+> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), SecretStore will prompt you to enter your existing password once per session. If this is your first time using SecretStore, IPC configures it as passwordless automatically.
 
 ---
 
 ## Installation
+
+### From PowerShell Gallery (recommended)
+
+```powershell
+Install-Module -Name IPC -Scope CurrentUser
+```
+
+### From source
 
 ```powershell
 git clone https://github.com/schenardie/IPCSkill.git
@@ -50,7 +60,7 @@ No build step required — run the CLI directly or import the module.
 
 ## Authentication
 
-IPCSkill supports two authentication methods. Only one is active at a time — storing a new token clears the other to prevent cross-tenant issues.
+IPC supports two authentication methods. Only one is active at a time — storing a new token clears the other to prevent cross-tenant issues.
 
 ### Option 1a — Access token (from Network tab)
 
@@ -59,21 +69,21 @@ Short-lived token that lasts until it expires (typically ~1 hour). No auto-refre
 1. Open [https://intune.microsoft.com](https://intune.microsoft.com) in your browser and sign in.
 2. Open browser DevTools (F12) → **Network** tab.
 3. Filter for requests to `graph.microsoft.com` and copy the `Authorization: Bearer <token>` value.
-4. Start IPCSkill and use **option 1a** to paste the token.
+4. Start IPC and use **option 1a** to paste the token.
 
 ### Option 1b — Refresh token (from Session Storage)
 
-Long-lived token that allows IPCSkill to automatically acquire fresh access tokens via the BroCI (Nested App Authentication) flow. As long as you refresh at least once every 24 hours, the session stays alive indefinitely.
+Long-lived token that allows IPC to automatically acquire fresh access tokens via the BroCI (Nested App Authentication) flow. As long as you refresh at least once every 24 hours, the session stays alive indefinitely.
 
 1. Open [https://intune.microsoft.com](https://intune.microsoft.com) in your browser and sign in.
 2. Open browser DevTools (F12) → **Application** tab → **Session Storage**.
 3. Look for an MSAL entry with `credentialType: "RefreshToken"`.
 4. Copy the `secret` field value.
-5. Start IPCSkill and use **option 1b**.
+5. Start IPC and use **option 1b**.
 6. Enter your tenant domain (e.g. `contoso.onmicrosoft.com`) or tenant GUID.
 7. Paste the refresh token secret.
 
-IPCSkill exchanges the refresh token for a fresh Intune access token using the Azure Portal as a broker. The refresh token is rotated on each exchange, so the stored token is always up to date.
+IPC exchanges the refresh token for a fresh Intune access token using the Azure Portal as a broker. The refresh token is rotated on each exchange, so the stored token is always up to date.
 
 ### Option 1c — Clear all tokens
 
@@ -86,14 +96,14 @@ Tokens are stored securely using the PowerShell `SecretStore` vault (encrypted, 
 ## Usage — CLI
 
 ```powershell
-./src/Start-IPCSkill.ps1
+./cli/Start-IPC.ps1
 ```
 
 ### Menu options
 
 ```
 ╔══════════════════════════════════════════════════╗
-║           IPCSkill – Device Inventory            ║
+║           IPC – Device Inventory                 ║
 ╠══════════════════════════════════════════════════╣
 ║  1a  Store access token  (from Network tab)      ║
 ║  1b  Store refresh token (from Session Storage)  ║
@@ -141,7 +151,11 @@ Results are printed as JSON (one object per installed application) and can optio
 ## Usage — PowerShell module
 
 ```powershell
-Import-Module ./src/IPCSkill.psm1
+# After gallery install:
+Import-Module IPC
+
+# Or from source:
+Import-Module ./IPC/IPC.psd1
 
 # Store an access token (retrieved from browser DevTools Network tab)
 Set-IPCAccessToken -AccessToken 'eyJ...'
@@ -153,15 +167,15 @@ Set-IPCRefreshToken -RefreshToken '<secret from Session Storage>' -Tenant 'conto
 Clear-IPCTokens
 
 # List available inventory categories for a device
-$categories = Get-IPCDeviceInventoryCategories -DeviceId 'your-device-guid'
+$categories = Get-IPCInventoryCategory -DeviceId 'your-device-guid'
 $categories | ForEach-Object { $_.id }
 
 # Get hardware inventory for a specific category
-$battery = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'battery'
+$battery = Get-IPCInventory -DeviceId 'your-device-guid' -Category 'battery'
 $battery | ConvertTo-Json -Depth 10
 
 # Get software (application) inventory
-$apps = Get-IPCSoftwareInventory -DeviceId 'your-device-guid'
+$apps = Get-IPCSoftware -DeviceId 'your-device-guid'
 $apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
 ```
 
@@ -173,7 +187,7 @@ $apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
 
 ```powershell
 # 1. Import the module
-Import-Module ./src/IPCSkill.psm1
+Import-Module IPC
 
 # 2. Authenticate (choose one method)
 
@@ -267,7 +281,7 @@ Requires [Pester](https://pester.dev) (v5+):
 
 ```powershell
 Install-Module Pester -Scope CurrentUser -Force
-Invoke-Pester ./tests/IPCSkill.Tests.ps1 -Output Detailed
+Invoke-Pester ./tests/IPC.Tests.ps1 -Output Detailed
 ```
 
 ---

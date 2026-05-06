@@ -1,15 +1,15 @@
-# IPCSkill — AI Agent Skill Manifest
+# IPC — AI Agent Skill Manifest
 
 ## Overview
 
-IPCSkill queries hardware and software inventory from Microsoft Intune managed devices via the Graph beta API. It requires no Azure app registration — it uses Intune's own public client ID.
+IPC queries hardware and software inventory from Microsoft Intune managed devices via the Graph beta API. It requires no Azure app registration — it uses Intune's own public client ID.
 
 **Primary function:** `Invoke-IPCSkill`
 
 ## Setup
 
 ```powershell
-Import-Module ./src/IPCSkill.psm1
+Import-Module IPC
 
 # Authenticate (one of these — refresh token is preferred for long sessions)
 Set-IPCRefreshToken -RefreshToken '<secret from browser Session Storage>'
@@ -101,13 +101,13 @@ For advanced usage, the module also exports individual functions:
 
 ```powershell
 # Direct device lookup
-$devices = Get-IPCManagedDevices -Filter "startswith(deviceName,'LAPTOP')"
+$devices = Get-IPCDevice -Filter "startswith(deviceName,'LAPTOP')"
 
 # Direct inventory fetch
-$battery = Get-IPCDeviceInventory -DeviceId $deviceId -Category 'battery'
+$battery = Get-IPCInventory -DeviceId $deviceId -Category 'battery'
 
 # Direct software inventory
-$apps = Get-IPCSoftwareInventory -DeviceId $deviceId
+$apps = Get-IPCSoftware -DeviceId $deviceId
 
 # Batch operations
 $results = Get-IPCInventoryBatch -DeviceIds @($id1, $id2) -Categories @('bios', 'battery')

@@ -2,11 +2,11 @@
 #Requires -Modules Pester
 <#
 .SYNOPSIS
-    Pester tests for the IPCSkill PowerShell module.
+    Pester tests for the IPC PowerShell module.
 #>
 
 BeforeAll {
-    $modulePath = Join-Path $PSScriptRoot '..' 'src' 'IPCSkill.psm1'
+    $modulePath = Join-Path $PSScriptRoot '..' 'IPC' 'IPC.psm1'
     Import-Module $modulePath -Force
 
     function New-FakeJwt {

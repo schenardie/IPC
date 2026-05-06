@@ -1,13 +1,13 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    IPCSkill – Intune Properties Catalog Skill (PowerShell module).
+    IPC – Intune Properties Catalog (PowerShell module).
 
 .DESCRIPTION
     Interactive CLI and PowerShell module for querying hardware and software
     inventory from Intune managed devices via the Microsoft Graph beta API.
 
-    No Azure app registration is required. IPCSkill uses Microsoft Intune's
+    No Azure app registration is required. IPC uses Microsoft Intune's
     own well-known public client ID.
 
     Supports two authentication methods:
@@ -21,7 +21,7 @@ $script:INTUNE_CLIENT_ID = '5926fc8e-304e-4f59-8bed-58ca97cc39a4'
 $script:BROKER_CLIENT_ID = 'c44b4083-3bb0-49c1-b47d-974e53cbdf3c'
 $script:BROKER_URL       = 'https://portal.azure.com/'
 $script:GRAPH_BASE_URL   = 'https://graph.microsoft.com/beta'
-$script:VAULT_NAME       = 'IPCSkillVault'
+$script:VAULT_NAME       = 'IPCVault'
 $script:SECRET_ACCESS    = 'ipc-access-token'
 $script:SECRET_REFRESH   = 'ipc-refresh-token'
 $script:SECRET_METADATA  = 'ipc-token-metadata'
@@ -39,7 +39,7 @@ function Initialize-IPCSecretVault {
     <#
     .SYNOPSIS
         Ensures SecretManagement + SecretStore modules are installed and the
-        IPCSkill vault is registered.
+        IPC vault is registered.
     .DESCRIPTION
         If the SecretStore is password-protected, SecretStore's own built-in
         prompt will ask for the password once. After that, the timeout is
@@ -265,7 +265,7 @@ function Set-IPCRefreshToken {
         Session Storage → look for an MSAL entry with credentialType "RefreshToken"
         and copy the "secret" field value.
 
-        The refresh token belongs to the Azure Portal SPA (c44b4083). IPCSkill
+        The refresh token belongs to the Azure Portal SPA (c44b4083). IPC
         exchanges it for an Intune access token using the BroCI broker flow.
 
         Any previously stored access token is cleared to avoid cross-tenant issues.
@@ -641,7 +641,7 @@ function Invoke-GraphBatch {
 
 # ── IPC Explorer ─────────────────────────────────────────────────────────────
 
-function Get-IPCManagedDevices {
+function Get-IPCDevice {
     <#
     .SYNOPSIS
         Lists managed devices visible to the authenticated user.
@@ -671,7 +671,9 @@ function Get-IPCManagedDevices {
     return $results
 }
 
-function Get-IPCManagedDevice {
+Set-Alias -Name Get-IPCDevices -Value Get-IPCDevice
+
+function Get-IPCDeviceDetail {
     <#
     .SYNOPSIS
         Fetches a single managed device by its Intune device ID.
@@ -685,7 +687,7 @@ function Get-IPCManagedDevice {
     return Invoke-GraphRequest -Path "/deviceManagement/managedDevices/$DeviceId"
 }
 
-function Get-IPCDeviceInventoryCategories {
+function Get-IPCInventoryCategory {
     <#
     .SYNOPSIS
         Returns the inventory categories available for a device.
@@ -701,7 +703,7 @@ function Get-IPCDeviceInventoryCategories {
     return @($response.value ?? @())
 }
 
-function Get-IPCDeviceInventory {
+function Get-IPCInventory {
     <#
     .SYNOPSIS
         Returns cleaned inventory instances for a device and category.
@@ -732,7 +734,7 @@ function Get-IPCDeviceInventory {
     })
 }
 
-function Get-IPCSoftwareInventory {
+function Get-IPCSoftware {
     <#
     .SYNOPSIS
         Returns cleaned software (application) inventory for a device.
@@ -1115,23 +1117,23 @@ function Invoke-IPCSkill {
     $winFilter = "operatingSystem eq 'Windows'"
 
     if ($DeviceId) {
-        $devices = @(Get-IPCManagedDevice -DeviceId $DeviceId)
+        $devices = @(Get-IPCDeviceDetail -DeviceId $DeviceId)
     } elseif ($AllDevices) {
-        $devices = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
+        $devices = @(Get-IPCDevice -Filter $winFilter -Top $Top `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
     } elseif ($DeviceName) {
-        $devices = @(Get-IPCManagedDevices `
+        $devices = @(Get-IPCDevice `
             -Filter "startswith(deviceName,'$DeviceName') and $winFilter" `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState') `
             -Top $Top)
 
         if ($devices.Count -eq 0) {
-            $all = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
+            $all = @(Get-IPCDevice -Filter $winFilter -Top $Top `
                 -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
             $devices = @($all | Where-Object { $_.deviceName -like "*$DeviceName*" })
         }
     } elseif ($Action -eq 'ListDevices') {
-        $devices = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
+        $devices = @(Get-IPCDevice -Filter $winFilter -Top $Top `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
     }
 
@@ -1164,7 +1166,7 @@ function Invoke-IPCSkill {
                 return @{ Action = 'ListCategories'; DeviceCount = 0; Categories = @() }
             }
             $firstId = $devices[0].id ?? $devices[0].deviceId ?? ''
-            $cats = Get-IPCDeviceInventoryCategories -DeviceId $firstId
+            $cats = Get-IPCInventoryCategory -DeviceId $firstId
             $catIds = @($cats | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
             return @{
                 Action      = 'ListCategories'
@@ -1190,7 +1192,7 @@ function Invoke-IPCSkill {
             $selectedCats = @()
             if (-not $Category -or $Category -contains 'all') {
                 $firstId = $deviceIds[0]
-                $available = Get-IPCDeviceInventoryCategories -DeviceId $firstId
+                $available = Get-IPCInventoryCategory -DeviceId $firstId
                 $selectedCats = @($available | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
             } else {
                 $selectedCats = $Category
@@ -1304,25 +1306,20 @@ function Clear-IPCTokens {
 # ── Exported functions ───────────────────────────────────────────────────────
 
 Export-ModuleMember -Function @(
-    'Initialize-IPCSecretVault'
     'ConvertFrom-JwtPayload'
     'Resolve-AccessToken'
     'ConvertTo-FriendlyName'
     'ConvertTo-CleanInstance'
     'Set-IPCAccessToken'
     'Set-IPCRefreshToken'
-    'Update-IPCAccessTokenFromRefresh'
-    'Get-IPCValidToken'
     'Get-IPCTokenInfo'
     'Clear-IPCTokens'
-    'Invoke-GraphRequest'
-    'Invoke-GraphBatch'
     'Invoke-IPCSkill'
-    'Get-IPCManagedDevices'
-    'Get-IPCManagedDevice'
-    'Get-IPCDeviceInventoryCategories'
-    'Get-IPCDeviceInventory'
-    'Get-IPCSoftwareInventory'
+    'Get-IPCDevice'
+    'Get-IPCDeviceDetail'
+    'Get-IPCInventoryCategory'
+    'Get-IPCInventory'
+    'Get-IPCSoftware'
     'Get-IPCInventoryBatch'
     'Get-IPCSoftwareInventoryBatch'
-)
+) -Alias 'Get-IPCDevices'
