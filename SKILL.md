@@ -1,3 +1,13 @@
+---
+name: IPC
+description: Query hardware and software inventory from Microsoft Intune managed devices via the Graph beta API. No Azure app registration required.
+version: 1.0.0
+author: schenardie
+tags: [intune, graph, inventory, devicemanagement]
+tools:
+  - powershell
+---
+
 # IPC — AI Agent Skill Manifest
 
 ## Overview
