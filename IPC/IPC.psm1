@@ -1099,6 +1099,8 @@ function Invoke-IPC {
         [int]$Top = 100
     )
 
+    $ConfirmPreference = 'None'
+
     # ── Validate parameter combinations ──────────────────────────────────
     $deviceSelectors = @(
         ($DeviceName ? 1 : 0),
