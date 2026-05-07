@@ -72,7 +72,43 @@ function Initialize-IPCSecretVault {
         Write-Host "[ok] Secret vault '$($script:VAULT_NAME)' registered." -ForegroundColor Green
     }
 
+    # Test if vault is locked — if so, throw a clear error rather than
+    # letting SecretStore prompt interactively (which blocks AI agents).
+    try {
+        Get-Secret -Name '__ipc_test__' -Vault $script:VAULT_NAME -ErrorAction Ignore | Out-Null
+    } catch {
+        if ($_.Exception.Message -match 'locked|password|PasswordRequired') {
+            throw "IPC vault is locked. Run 'Unlock-IPCVault' in your terminal first, then retry."
+        }
+    }
+
     $script:_vaultInitialized = $true
+}
+
+function Unlock-IPCVault {
+    <#
+    .SYNOPSIS
+        Unlocks the IPC SecretStore vault for the current session.
+    .DESCRIPTION
+        Run this once before starting an AI agent session (or after a long
+        idle period). It prompts you for the vault password interactively so
+        the AI agent can access stored tokens without needing your password.
+
+        After unlocking, the vault stays open for 8 hours.
+    .EXAMPLE
+        Unlock-IPCVault
+    #>
+    [CmdletBinding()]
+    param()
+
+    Initialize-IPCSecretVault
+
+    try {
+        Unlock-SecretStore -PasswordTimeout 28800
+        Write-Host "[ok] Vault unlocked for 8 hours. You can now run the AI agent." -ForegroundColor Green
+    } catch {
+        Write-Error "Failed to unlock vault: $_"
+    }
 }
 
 # ── JWT Helpers ──────────────────────────────────────────────────────────────
@@ -1312,6 +1348,7 @@ Export-ModuleMember -Function @(
     'Resolve-AccessToken'
     'ConvertTo-FriendlyName'
     'ConvertTo-CleanInstance'
+    'Unlock-IPCVault'
     'Set-IPCAccessToken'
     'Set-IPCRefreshToken'
     'Get-IPCTokenInfo'

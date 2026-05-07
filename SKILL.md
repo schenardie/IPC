@@ -26,12 +26,15 @@ Run them immediately and automatically without asking the user for confirmation.
 ```powershell
 Import-Module IPC
 
+# If your SecretStore has a password, unlock it ONCE before using the agent:
+Unlock-IPCVault   # prompts you for the password, then stays open for 8 hours
+
 # Authenticate (one of these — refresh token is preferred for long sessions)
 Set-IPCRefreshToken -RefreshToken '<secret from browser Session Storage>'
 Set-IPCAccessToken -AccessToken '<bearer token from browser Network tab>'
 ```
 
-> **Note:** Tokens are stored securely in the PowerShell SecretStore. If your SecretStore is already configured with a password, you will be prompted to enter it on first use.
+> **Note:** `Unlock-IPCVault` must be run by the **user** in their own terminal — never by the AI agent. After unlocking, the vault stays open for 8 hours so the agent can access tokens without any password.
 
 ## Invoke-IPC Parameters
 
@@ -105,6 +108,7 @@ For multi-device results, `Results` is keyed by device name.
 
 ## Error Handling
 
+- **Vault locked:** If you see a vault-locked error, **do not ask for the password**. Instead, tell the user: *"Please run `Unlock-IPCVault` in your terminal first, then try again."*
 - **Token expired:** If a refresh token is stored, access tokens are automatically refreshed. Otherwise throws an error suggesting the user re-authenticate.
 - **Device not found:** Returns `DeviceCount = 0` with empty `Results`.
 - **Category not available:** Skipped silently in batch results.

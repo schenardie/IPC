@@ -12,6 +12,7 @@
         @{ ModuleName = 'Microsoft.PowerShell.SecretStore';       ModuleVersion = '1.0.0' }
     )
     FunctionsToExport = @(
+        'Unlock-IPCVault'
         'Set-IPCAccessToken'
         'Set-IPCRefreshToken'
         'Clear-IPCTokens'
