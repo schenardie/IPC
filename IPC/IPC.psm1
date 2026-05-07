@@ -41,9 +41,9 @@ function Initialize-IPCSecretVault {
         Ensures SecretManagement + SecretStore modules are installed and the
         IPC vault is registered.
     .DESCRIPTION
-        If the SecretStore is password-protected, SecretStore's own built-in
-        prompt will ask for the password once. After that, the timeout is
-        extended so it stays unlocked for the session.
+        Configures SecretStore with no password on first run. If it already
+        exists with a password the Set-SecretStoreConfiguration call is
+        skipped silently and the vault is left as-is.
     #>
     [CmdletBinding()]
     param()
@@ -58,13 +58,17 @@ function Initialize-IPCSecretVault {
         Import-Module $mod -ErrorAction Stop
     }
 
-    # Check if SecretStore exists. If this is first-time setup, configure it
-    # with no password so the user isn't prompted. If it already exists with
-    # a password, leave it alone — SecretStore will prompt the user itself.
-    $storeConfig = Get-SecretStoreConfiguration -ErrorAction SilentlyContinue
-    if ($null -eq $storeConfig) {
-        Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force
-        Write-Host "[ok] SecretStore configured." -ForegroundColor Green
+    # Configure SecretStore without a password BEFORE any call that would
+    # trigger store creation. On macOS, Get-SecretStoreConfiguration creates
+    # the store using the default (password-required) config when no store
+    # exists yet, so we must set Authentication=None first.
+    # If the store already exists with a password this call throws — we catch
+    # and continue, leaving the existing configuration intact.
+    try {
+        Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force -ErrorAction Stop
+        Write-Host "[ok] SecretStore configured (no password)." -ForegroundColor Green
+    } catch {
+        # Store already exists with a different configuration — leave it alone.
     }
 
     if (-not (Get-SecretVault -Name $script:VAULT_NAME -ErrorAction SilentlyContinue)) {
