@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    IPC – Intune Properties Catalog (PowerShell module).
+    IPC – Intune Properties Catalog Skill (PowerShell module).
 
 .DESCRIPTION
     Interactive CLI and PowerShell module for querying hardware and software
@@ -72,6 +72,7 @@ function Initialize-IPCSecretVault {
         Write-Host "[ok] Secret vault '$($script:VAULT_NAME)' registered." -ForegroundColor Green
     }
 
+
     # Test if vault is locked — if so, throw a clear error rather than
     # letting SecretStore prompt interactively (which blocks AI agents).
     try {
@@ -82,7 +83,7 @@ function Initialize-IPCSecretVault {
         }
     }
 
-    $script:_vaultInitialized = $true
+        $script:_vaultInitialized = $true
 }
 
 function Unlock-IPCVault {
@@ -677,7 +678,7 @@ function Invoke-GraphBatch {
 
 # ── IPC Explorer ─────────────────────────────────────────────────────────────
 
-function Get-IPCDevice {
+function Get-IPCManagedDevices {
     <#
     .SYNOPSIS
         Lists managed devices visible to the authenticated user.
@@ -707,9 +708,7 @@ function Get-IPCDevice {
     return $results
 }
 
-Set-Alias -Name Get-IPCDevices -Value Get-IPCDevice
-
-function Get-IPCDeviceDetail {
+function Get-IPCManagedDevice {
     <#
     .SYNOPSIS
         Fetches a single managed device by its Intune device ID.
@@ -723,7 +722,7 @@ function Get-IPCDeviceDetail {
     return Invoke-GraphRequest -Path "/deviceManagement/managedDevices/$DeviceId"
 }
 
-function Get-IPCInventoryCategory {
+function Get-IPCDeviceInventoryCategories {
     <#
     .SYNOPSIS
         Returns the inventory categories available for a device.
@@ -739,7 +738,7 @@ function Get-IPCInventoryCategory {
     return @($response.value ?? @())
 }
 
-function Get-IPCInventory {
+function Get-IPCDeviceInventory {
     <#
     .SYNOPSIS
         Returns cleaned inventory instances for a device and category.
@@ -770,7 +769,7 @@ function Get-IPCInventory {
     })
 }
 
-function Get-IPCSoftware {
+function Get-IPCSoftwareInventory {
     <#
     .SYNOPSIS
         Returns cleaned software (application) inventory for a device.
@@ -1135,8 +1134,6 @@ function Invoke-IPC {
         [int]$Top = 100
     )
 
-    $ConfirmPreference = 'None'
-
     # ── Validate parameter combinations ──────────────────────────────────
     $deviceSelectors = @(
         ($DeviceName ? 1 : 0),
@@ -1155,23 +1152,23 @@ function Invoke-IPC {
     $winFilter = "operatingSystem eq 'Windows'"
 
     if ($DeviceId) {
-        $devices = @(Get-IPCDeviceDetail -DeviceId $DeviceId)
+        $devices = @(Get-IPCManagedDevice -DeviceId $DeviceId)
     } elseif ($AllDevices) {
-        $devices = @(Get-IPCDevice -Filter $winFilter -Top $Top `
+        $devices = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
     } elseif ($DeviceName) {
-        $devices = @(Get-IPCDevice `
+        $devices = @(Get-IPCManagedDevices `
             -Filter "startswith(deviceName,'$DeviceName') and $winFilter" `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState') `
             -Top $Top)
 
         if ($devices.Count -eq 0) {
-            $all = @(Get-IPCDevice -Filter $winFilter -Top $Top `
+            $all = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
                 -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
             $devices = @($all | Where-Object { $_.deviceName -like "*$DeviceName*" })
         }
     } elseif ($Action -eq 'ListDevices') {
-        $devices = @(Get-IPCDevice -Filter $winFilter -Top $Top `
+        $devices = @(Get-IPCManagedDevices -Filter $winFilter -Top $Top `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState'))
     }
 
@@ -1204,7 +1201,7 @@ function Invoke-IPC {
                 return @{ Action = 'ListCategories'; DeviceCount = 0; Categories = @() }
             }
             $firstId = $devices[0].id ?? $devices[0].deviceId ?? ''
-            $cats = Get-IPCInventoryCategory -DeviceId $firstId
+            $cats = Get-IPCDeviceInventoryCategories -DeviceId $firstId
             $catIds = @($cats | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
             return @{
                 Action      = 'ListCategories'
@@ -1230,7 +1227,7 @@ function Invoke-IPC {
             $selectedCats = @()
             if (-not $Category -or $Category -contains 'all') {
                 $firstId = $deviceIds[0]
-                $available = Get-IPCInventoryCategory -DeviceId $firstId
+                $available = Get-IPCDeviceInventoryCategories -DeviceId $firstId
                 $selectedCats = @($available | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
             } else {
                 $selectedCats = $Category
@@ -1344,21 +1341,25 @@ function Clear-IPCTokens {
 # ── Exported functions ───────────────────────────────────────────────────────
 
 Export-ModuleMember -Function @(
+    'Initialize-IPCSecretVault'
     'ConvertFrom-JwtPayload'
     'Resolve-AccessToken'
     'ConvertTo-FriendlyName'
     'ConvertTo-CleanInstance'
-    'Unlock-IPCVault'
     'Set-IPCAccessToken'
     'Set-IPCRefreshToken'
+    'Update-IPCAccessTokenFromRefresh'
+    'Get-IPCValidToken'
     'Get-IPCTokenInfo'
     'Clear-IPCTokens'
+    'Invoke-GraphRequest'
+    'Invoke-GraphBatch'
     'Invoke-IPC'
-    'Get-IPCDevice'
-    'Get-IPCDeviceDetail'
-    'Get-IPCInventoryCategory'
-    'Get-IPCInventory'
-    'Get-IPCSoftware'
+    'Get-IPCManagedDevices'
+    'Get-IPCManagedDevice'
+    'Get-IPCDeviceInventoryCategories'
+    'Get-IPCDeviceInventory'
+    'Get-IPCSoftwareInventory'
     'Get-IPCInventoryBatch'
     'Get-IPCSoftwareInventoryBatch'
-) -Alias 'Get-IPCDevices'
+)

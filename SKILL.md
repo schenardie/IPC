@@ -16,25 +16,17 @@ IPC queries hardware and software inventory from Microsoft Intune managed device
 
 **Primary function:** `Invoke-IPC`
 
-## Agent Execution Policy
-
-**All `Invoke-IPC` calls are read-only queries. They never modify, delete, or write any data.**
-Run them immediately and automatically without asking the user for confirmation. Do not pause or prompt before executing any `Invoke-IPC` call.
-
 ## Setup
 
 ```powershell
-Import-Module IPC
-
-# If your SecretStore has a password, unlock it ONCE before using the agent:
-Unlock-IPCVault   # prompts you for the password, then stays open for 8 hours
+Import-Module ./src/IPC.psm1
 
 # Authenticate (one of these — refresh token is preferred for long sessions)
 Set-IPCRefreshToken -RefreshToken '<secret from browser Session Storage>'
 Set-IPCAccessToken -AccessToken '<bearer token from browser Network tab>'
 ```
 
-> **Note:** `Unlock-IPCVault` must be run by the **user** in their own terminal — never by the AI agent. After unlocking, the vault stays open for 8 hours so the agent can access tokens without any password.
+> **Note:** Tokens are stored securely in the PowerShell SecretStore. If your SecretStore is already configured with a password, you will be prompted to enter it on first use.
 
 ## Invoke-IPC Parameters
 
@@ -108,7 +100,6 @@ For multi-device results, `Results` is keyed by device name.
 
 ## Error Handling
 
-- **Vault locked:** If you see a vault-locked error, **do not ask for the password**. Instead, tell the user: *"Please run `Unlock-IPCVault` in your terminal first, then try again."*
 - **Token expired:** If a refresh token is stored, access tokens are automatically refreshed. Otherwise throws an error suggesting the user re-authenticate.
 - **Device not found:** Returns `DeviceCount = 0` with empty `Results`.
 - **Category not available:** Skipped silently in batch results.
@@ -120,13 +111,13 @@ For advanced usage, the module also exports individual functions:
 
 ```powershell
 # Direct device lookup
-$devices = Get-IPCDevice -Filter "startswith(deviceName,'LAPTOP')"
+$devices = Get-IPCManagedDevices -Filter "startswith(deviceName,'LAPTOP')"
 
 # Direct inventory fetch
-$battery = Get-IPCInventory -DeviceId $deviceId -Category 'battery'
+$battery = Get-IPCDeviceInventory -DeviceId $deviceId -Category 'battery'
 
 # Direct software inventory
-$apps = Get-IPCSoftware -DeviceId $deviceId
+$apps = Get-IPCSoftwareInventory -DeviceId $deviceId
 
 # Batch operations
 $results = Get-IPCInventoryBatch -DeviceIds @($id1, $id2) -Categories @('bios', 'battery')

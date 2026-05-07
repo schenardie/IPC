@@ -14,7 +14,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-# Import the module from the IPC folder (relative to repo root)
+# Import the module from the same directory
 $modulePath = Join-Path $PSScriptRoot '..' 'IPC' 'IPC.psm1'
 Import-Module $modulePath -Force
 
@@ -102,16 +102,16 @@ function Select-Devices {
     $name = Read-Host 'Device name (partial) or GUID'
 
     if ($name -match '^[0-9a-fA-F\-]{36}$') {
-        return @(Get-IPCDeviceDetail -DeviceId $name)
+        return @(Get-IPCManagedDevice -DeviceId $name)
     }
 
     $winFilter = "operatingSystem eq 'Windows'"
 
-    $matches_ = Get-IPCDevice -Filter "startswith(deviceName,'$name') and $winFilter" `
+    $matches_ = Get-IPCManagedDevices -Filter "startswith(deviceName,'$name') and $winFilter" `
         -Select @('id', 'deviceName', 'operatingSystem', 'complianceState')
 
     if ($matches_.Count -eq 0) {
-        $allDevices = Get-IPCDevice -Filter $winFilter `
+        $allDevices = Get-IPCManagedDevices -Filter $winFilter `
             -Select @('id', 'deviceName', 'operatingSystem', 'complianceState')
         $matches_ = @($allDevices | Where-Object { $_.deviceName -like "*$name*" })
     }
@@ -152,7 +152,7 @@ function Select-Devices {
 $menu = @"
 
 ╔══════════════════════════════════════════════════╗
-║           IPC – Device Inventory                 ║
+║           IPC – Device Inventory            ║
 ╠══════════════════════════════════════════════════╣
 ║  1a  Store access token  (from Network tab)      ║
 ║  1b  Store refresh token (from Session Storage)  ║
@@ -240,7 +240,7 @@ while ($true) {
 
                 $firstId = $devices[0].id ?? $devices[0].deviceId ?? ''
                 Write-Host '[info] Loading inventory categories...' -ForegroundColor Cyan
-                $categories = Get-IPCInventoryCategory -DeviceId $firstId
+                $categories = Get-IPCDeviceInventoryCategories -DeviceId $firstId
                 if ($categories.Count -eq 0) {
                     Write-Host '[warn] No inventory categories found for this device.' -ForegroundColor Yellow
                     continue

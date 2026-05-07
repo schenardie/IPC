@@ -21,7 +21,7 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
   - [Device inventory](#device-inventory)
   - [Software inventory](#software-inventory)
 - [Usage — PowerShell module](#usage--powershell-module)
-- [Usage — AI agent (Invoke-IPC)](#usage--ai-agent-Invoke-IPC)
+- [Usage — AI agent (Invoke-IPC)](#usage--ai-agent-invoke-ipc)
 - [Running tests](#running-tests)
 - [Permissions](#permissions)
 
@@ -40,14 +40,6 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
 ---
 
 ## Installation
-
-### From PowerShell Gallery (recommended)
-
-```powershell
-Install-Module -Name IPC -Scope CurrentUser
-```
-
-### From source
 
 ```powershell
 git clone https://github.com/schenardie/IPC.git
@@ -96,14 +88,14 @@ Tokens are stored securely using the PowerShell `SecretStore` vault (encrypted, 
 ## Usage — CLI
 
 ```powershell
-./cli/Start-IPC.ps1
+./src/Start-IPC.ps1
 ```
 
 ### Menu options
 
 ```
 ╔══════════════════════════════════════════════════╗
-║           IPC – Device Inventory                 ║
+║           IPC – Device Inventory            ║
 ╠══════════════════════════════════════════════════╣
 ║  1a  Store access token  (from Network tab)      ║
 ║  1b  Store refresh token (from Session Storage)  ║
@@ -151,11 +143,7 @@ Results are printed as JSON (one object per installed application) and can optio
 ## Usage — PowerShell module
 
 ```powershell
-# After gallery install:
-Import-Module IPC
-
-# Or from source:
-Import-Module ./IPC/IPC.psd1
+Import-Module ./src/IPC.psm1
 
 # Store an access token (retrieved from browser DevTools Network tab)
 Set-IPCAccessToken -AccessToken 'eyJ...'
@@ -167,15 +155,15 @@ Set-IPCRefreshToken -RefreshToken '<secret from Session Storage>' -Tenant 'conto
 Clear-IPCTokens
 
 # List available inventory categories for a device
-$categories = Get-IPCInventoryCategory -DeviceId 'your-device-guid'
+$categories = Get-IPCDeviceInventoryCategories -DeviceId 'your-device-guid'
 $categories | ForEach-Object { $_.id }
 
 # Get hardware inventory for a specific category
-$battery = Get-IPCInventory -DeviceId 'your-device-guid' -Category 'battery'
+$battery = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'battery'
 $battery | ConvertTo-Json -Depth 10
 
 # Get software (application) inventory
-$apps = Get-IPCSoftware -DeviceId 'your-device-guid'
+$apps = Get-IPCSoftwareInventory -DeviceId 'your-device-guid'
 $apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
 ```
 
@@ -187,7 +175,7 @@ $apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
 
 ```powershell
 # 1. Import the module
-Import-Module IPC
+Import-Module ./src/IPC.psm1
 
 # 2. Authenticate (choose one method)
 

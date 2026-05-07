@@ -17,14 +17,16 @@
         'Set-IPCRefreshToken'
         'Clear-IPCTokens'
         'Get-IPCTokenInfo'
-        'Get-IPCDevice'
-        'Get-IPCDeviceDetail'
-        'Get-IPCInventoryCategory'
-        'Get-IPCInventory'
-        'Get-IPCSoftware'
+        'Get-IPCManagedDevices'
+        'Get-IPCManagedDevice'
+        'Get-IPCDeviceInventoryCategories'
+        'Get-IPCDeviceInventory'
+        'Get-IPCSoftwareInventory'
+        'Get-IPCInventoryBatch'
+        'Get-IPCSoftwareInventoryBatch'
         'Invoke-IPC'
     )
-    AliasesToExport   = @('Get-IPCDevices')
+    AliasesToExport   = @()
     CmdletsToExport   = @()
     VariablesToExport = @()
     PrivateData       = @{
@@ -32,7 +34,7 @@
             Tags        = @('Intune', 'Graph', 'Inventory', 'DeviceManagement', 'IPC', 'MicrosoftGraph')
             LicenseUri  = 'https://github.com/schenardie/IPC/blob/main/LICENSE'
             ProjectUri  = 'https://github.com/schenardie/IPC'
-            ReleaseNotes = 'v1.0.0: Renamed module to IPC for PowerShell Gallery publication. Friendly function names, restructured for PSGallery, MIT license added.'
+            ReleaseNotes = 'v1.0.0: Renamed module to IPC for PowerShell Gallery publication. Refactored function names (Get-IPCManagedDevices, Get-IPCDeviceInventory, etc.), improved auth flow, batch support, Unlock-IPCVault vault guard, MIT license.'
         }
     }
 }
