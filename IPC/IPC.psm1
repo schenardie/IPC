@@ -108,19 +108,27 @@ function Initialize-IPCSecretVault {
             Write-Host ''
         }
 
+        # Pre-create the localstore directory for both paths.
+        # SecretStore 1.0.6 on macOS throws "Could not find a part of the path
+        # .../localstore/storefile|storeconfig" when Reset-SecretStore is called
+        # and the directory does not yet exist. New-Item -Force on an existing
+        # directory is a safe no-op.
+        New-Item -ItemType Directory -Path $storePath -Force | Out-Null
+
         if ($usePassword) {
             Write-Host '[info] Configuring vault with password protection...' -ForegroundColor Cyan
             Write-Host '[info] You will be prompted to set your vault password now.' -ForegroundColor Cyan
-            Set-SecretStoreConfiguration -Authentication Password -Interaction Prompt -Confirm:$false
+            # Use Reset-SecretStore (not Set-SecretStoreConfiguration) so the store is
+            # created with the correct settings from the start instead of being
+            # initialised with defaults first (which causes an extra password prompt).
+            # -Force suppresses the ShouldContinue confirmation; the password-creation
+            # prompt still appears as expected.
+            Reset-SecretStore -Authentication Password -Interaction Prompt -Force -WarningAction SilentlyContinue
             Write-Host '[ok] Vault secured with a password.' -ForegroundColor Green
             Write-Host '[!] Run Unlock-IPCVault in your terminal before using the IPC agent or skill.' -ForegroundColor Yellow
         } else {
-            # Ensure the localstore directory exists before Reset-SecretStore runs.
-            # On some module versions (e.g. 1.0.6) Reset-SecretStore throws if the
-            # directory is absent even when creating a brand new store.
-            New-Item -ItemType Directory -Path $storePath -Force | Out-Null
             # -Force suppresses the ShouldContinue prompt cross-platform.
-            Reset-SecretStore -Authentication None -Interaction None -Force
+            Reset-SecretStore -Authentication None -Interaction None -Force -WarningAction SilentlyContinue
             Write-Host '[ok] Vault configured (no password) — always seamless.' -ForegroundColor Green
         }
     }
