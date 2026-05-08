@@ -183,7 +183,7 @@ function Show-TokenStatus {
 # ── Main loop ────────────────────────────────────────────────────────────────
 
 try {
-    Initialize-IPCSecretVault
+    Initialize-IPCSecretVault -Interactive
 } catch {
     Write-Error "Failed to initialize secret vault: $_"
     exit 1

@@ -12,6 +12,8 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
 
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Vault setup](#vault-setup)
+- [Vault security](#vault-security)
 - [Authentication](#authentication)
   - [Option 1a — Access token (from Network tab)](#option-1a--access-token-from-network-tab)
   - [Option 1b — Refresh token (from Session Storage)](#option-1b--refresh-token-from-session-storage)
@@ -35,7 +37,7 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
   - `Microsoft.PowerShell.SecretManagement`
   - `Microsoft.PowerShell.SecretStore`
 
-> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), SecretStore will prompt you to enter your existing password once per session. If this is your first time using SecretStore, IPC configures it as passwordless automatically.
+> **SecretStore:** On first run IPC will ask whether to protect the vault with a password. Choose **No** for seamless, agent-friendly operation. Choose **Yes** for encrypted-at-rest storage — you must run `Unlock-IPCVault` before each agent session.
 
 ---
 
@@ -47,6 +49,100 @@ cd IPC
 ```
 
 No build step required — run the CLI directly or import the module.
+
+---
+
+## Vault setup
+
+The first time you run `./cli/Start-IPC.ps1`, IPC sets up a **SecretStore vault** to hold your tokens securely. You will see a one-time prompt:
+
+```
+  ┌─ IPC Vault Setup ───────────────────────────────────┐
+  │                                                      │
+  │  Protect the secret vault with a password?           │
+  │                                                      │
+  │  [N] No  — passwordless, always seamless,            │
+  │           works with AI agents/skills out of the box │
+  │                                                      │
+  │  [y] Yes — encrypted vault; you must run             │
+  │           Unlock-IPCVault before each agent session  │
+  │                                                      │
+  └──────────────────────────────────────────────────────┘
+```
+
+| Choice | Behaviour | Best for |
+|--------|-----------|----------|
+| **No (default)** | Vault is never locked — tokens are always accessible without a prompt | Most users, AI agent / Copilot skill use |
+| **Yes** | Vault is encrypted with a password you set now. Run `Unlock-IPCVault` in your terminal once before using the IPC agent or skill each session. The vault stays unlocked for 8 hours. | High-security environments where you want stored tokens encrypted at rest |
+
+> This prompt appears **once only**. The choice is persisted by SecretStore. If you later want to change it, see [Resetting the vault](#resetting-the-vault) below.
+
+### Unlocking a password-protected vault
+
+If you chose a password, unlock the vault before starting an agent or skill session:
+
+```powershell
+Import-Module ./IPC/IPC.psm1
+Unlock-IPCVault    # prompts for your password, stays unlocked for 8 hours
+```
+
+### Resetting the vault
+
+To wipe the vault and start over (e.g. to change the password setting):
+
+```powershell
+# PowerShell 7
+Import-Module Microsoft.PowerShell.SecretStore
+Remove-SecretStore -Force
+```
+
+Or delete the store files directly (macOS/Linux):
+
+```bash
+rm -rf ~/.secretmanagement
+```
+
+> ⚠ This removes all stored tokens. Re-enter them via options `1a` or `1b` after the reset.
+
+---
+
+## Vault security
+
+### The short answer
+
+**Your tokens are encrypted on disk regardless of whether you set a vault password or not.** Choosing "no password" does not mean "no encryption" — it means the encryption key is managed by your operating system rather than by a separate password you type.
+
+### How SecretStore encrypts your data
+
+`Microsoft.PowerShell.SecretStore` is an open-source module published by Microsoft. It always encrypts vault contents using **AES-256** before writing anything to disk. What differs between the two modes is how the AES key itself is protected:
+
+| Mode | How the AES key is protected |
+|------|------------------------------|
+| **Passwordless** | Windows: key is wrapped by **DPAPI** (Data Protection API), tied to your Windows user account and machine. macOS/Linux: key file stored at `~/.secretmanagement/` with **`600` permissions** (owner read/write only). |
+| **Password-protected** | The AES key is derived from your vault password using a key-derivation function. Without the password the key cannot be reconstructed. |
+
+In both cases the token data on disk is ciphertext — opening the files in a hex editor reveals nothing useful.
+
+### What passwordless protects against
+
+- ✅ **Other users on the same machine** — DPAPI (Windows) and file permissions (macOS/Linux) prevent other OS accounts from reading the store files
+- ✅ **Plain-text exposure** — tokens are never written to `.env` files, config files, shell history, or environment variables
+- ✅ **Accidental leaks** — no risk of committing a secrets file to source control
+- ✅ **Log/output scraping** — tokens stored in the vault are never echoed to the terminal
+
+### What passwordless does not protect against
+
+- ❌ **Processes running as your own user** — malware or a rogue script running in your user session can call the same SecretStore APIs and read the vault
+- ❌ **Root/Administrator access** — a system administrator can read the key files on macOS/Linux (same limitation as macOS Keychain when unlocked)
+- ❌ **Physical disk access** — an attacker with the raw disk and knowledge of the key file location could reconstruct the secrets (this is also true of most OS-level credential stores)
+
+### Is passwordless appropriate for IPC tokens?
+
+Yes, for the vast majority of users. The tokens IPC stores are **short-lived OAuth bearer tokens** (access tokens expire in ~1 hour; refresh tokens used by IPC expire in ~24 hours). Even in the worst case where a token is obtained, the attacker has a narrow window before it expires. You can further reduce exposure by authenticating as a **dedicated read-only account** — see [Permissions → Recommended: use a dedicated read-only account](#recommended-use-a-dedicated-read-only-account).
+
+Passwordless SecretStore is equivalent in security to your browser's saved-password store, macOS Keychain in an unlocked session, or Windows Credential Manager — all of which are standard practice for credential storage.
+
+Use the **password-protected** option if you are on a shared or managed machine where other administrators may have access to your user profile, or if your security policy explicitly requires credentials to be encrypted with a secret not derived from your OS login.
 
 ---
 
@@ -194,6 +290,7 @@ Invoke-IPC -Action ListDevices
 | Scenario | What happens | What you need to do |
 |----------|-------------|-------------------|
 | **First time** | No token stored | Authenticate with Method A or B above |
+| **Vault is password-protected** | Vault locked — agent calls will fail | Run `Unlock-IPCVault` in your terminal first |
 | **Within 1 hour** | Access token is valid | Nothing — calls work automatically |
 | **After 1 hour (with refresh token)** | Access token expired | Nothing — auto-refreshes silently via BroCI |
 | **After 24 hours (with refresh token)** | Refresh token expired | Re-authenticate: get a fresh refresh token from Session Storage |
@@ -281,6 +378,20 @@ IPC uses Microsoft Intune's own public client ID (`5926fc8e-304e-4f59-8bed-58ca9
 The refresh token flow uses the Azure Portal application (`c44b4083-3bb0-49c1-b47d-974e53cbdf3c`) as a broker via the BroCI (Nested App Authentication) exchange.
 
 The signed-in user must have at least the **Microsoft Intune Read Only Operator** (or equivalent) role in Entra ID to query device inventory data.
+
+### Recommended: use a dedicated read-only account
+
+IPC only ever reads data — it never writes to Intune or modifies any device. We strongly recommend authenticating as a **dedicated service or user account scoped to the minimum required role**, rather than using your day-to-day admin account. This limits the blast radius if a stored token is ever compromised.
+
+| Role | Access granted | Recommended? |
+|------|---------------|--------------|
+| `Microsoft Intune Read Only Operator` | Read device inventory, managed devices | ✅ Minimum required |
+| `Global Reader` | Read-only across all Microsoft 365 services | ⚠ Works, but broader than needed |
+| `Intune Administrator` / `Global Administrator` | Full read/write Intune and beyond | ❌ Unnecessary — avoid |
+
+**What a compromised read-only token can expose:** device names, hardware specs, installed software, OS versions, and compliance state. It cannot be used to enrol/unenrol devices, push policies, wipe devices, or access user data outside of Intune inventory.
+
+If your organisation supports it, use a **dedicated break-glass or service account** (e.g. `svc-ipc-readonly@contoso.onmicrosoft.com`) assigned only the `Microsoft Intune Read Only Operator` role. This way the account has no mailbox, no licences, and no access to anything outside Intune inventory — the token is as low-risk as it can be.
 
 ---
 

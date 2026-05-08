@@ -41,12 +41,28 @@ function Initialize-IPCSecretVault {
         Ensures SecretManagement + SecretStore modules are installed and the
         IPC vault is registered.
     .DESCRIPTION
-        Configures SecretStore with no password on first run. If it already
-        exists with a password the Set-SecretStoreConfiguration call is
-        skipped silently and the vault is left as-is.
+        On first run, detects whether a SecretStore has been created before.
+        When called with -Interactive (i.e. from the CLI), the user is shown a
+        one-time setup prompt to choose whether the vault is password-protected
+        or passwordless:
+
+          • Passwordless  — seamless, no prompts, works with AI agents/skills.
+          • With password — vault is encrypted; run Unlock-IPCVault once before
+                            each agent/skill session.
+
+        When called without -Interactive (module functions), a new store is
+        always configured passwordless so non-interactive callers are never
+        blocked.
+
+        Once the store is created the configuration is persisted by SecretStore
+        and this prompt never appears again.
     #>
     [CmdletBinding()]
-    param()
+    param(
+        # Pass this switch when calling from an interactive terminal (CLI).
+        # Enables the one-time vault setup prompt on first run.
+        [switch]$Interactive
+    )
 
     if ($script:_vaultInitialized) { return }
 
@@ -58,24 +74,56 @@ function Initialize-IPCSecretVault {
         Import-Module $mod -ErrorAction Stop
     }
 
-    # Configure SecretStore without a password BEFORE any call that would
-    # trigger store creation. On macOS, Get-SecretStoreConfiguration creates
-    # the store using the default (password-required) config when no store
-    # exists yet, so we must set Authentication=None first.
-    # If the store already exists with a password this call throws — we catch
-    # and continue, leaving the existing configuration intact.
-    try {
-        Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force -ErrorAction Stop
-        Write-Host "[ok] SecretStore configured (no password)." -ForegroundColor Green
-    } catch {
-        # Store already exists with a different configuration — leave it alone.
+    # Detect first run by checking whether the SecretStore data directory
+    # exists. We deliberately avoid calling Get-SecretStoreConfiguration here
+    # because on macOS it creates the store using the default (password-
+    # required) config before we can configure it ourselves.
+    $storePath = if ($IsWindows) {
+        Join-Path ([System.Environment]::GetFolderPath('LocalApplicationData')) `
+            'Microsoft' 'PowerShell' 'secretmanagement' 'localstore'
+    } else {
+        Join-Path $HOME '.secretmanagement' 'localstore'
+    }
+    $isNewStore = -not (Test-Path $storePath)
+
+    if ($isNewStore) {
+        $usePassword = $false
+
+        if ($Interactive) {
+            Write-Host ''
+            Write-Host '  ┌─ IPC Vault Setup ───────────────────────────────────┐' -ForegroundColor Cyan
+            Write-Host '  │                                                      │' -ForegroundColor Cyan
+            Write-Host '  │  Protect the secret vault with a password?           │' -ForegroundColor Cyan
+            Write-Host '  │                                                      │' -ForegroundColor Cyan
+            Write-Host '  │  [N] No  — passwordless, always seamless,            │' -ForegroundColor Green
+            Write-Host '  │           works with AI agents/skills out of the box │' -ForegroundColor Green
+            Write-Host '  │                                                      │' -ForegroundColor Cyan
+            Write-Host '  │  [y] Yes — encrypted vault; you must run             │' -ForegroundColor Yellow
+            Write-Host '  │           Unlock-IPCVault before each agent session  │' -ForegroundColor Yellow
+            Write-Host '  │                                                      │' -ForegroundColor Cyan
+            Write-Host '  └──────────────────────────────────────────────────────┘' -ForegroundColor Cyan
+            Write-Host ''
+            $answer = Read-Host '  Password-protect vault? [y/N]'
+            $usePassword = $answer.Trim().ToLower() -eq 'y'
+            Write-Host ''
+        }
+
+        if ($usePassword) {
+            Write-Host '[info] Configuring vault with password protection...' -ForegroundColor Cyan
+            Write-Host '[info] You will be prompted to set your vault password now.' -ForegroundColor Cyan
+            Set-SecretStoreConfiguration -Authentication Password -Interaction Prompt -Confirm:$false -Force
+            Write-Host '[ok] Vault secured with a password.' -ForegroundColor Green
+            Write-Host '[!] Run Unlock-IPCVault in your terminal before using the IPC agent or skill.' -ForegroundColor Yellow
+        } else {
+            Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force
+            Write-Host '[ok] Vault configured (no password) — always seamless.' -ForegroundColor Green
+        }
     }
 
     if (-not (Get-SecretVault -Name $script:VAULT_NAME -ErrorAction SilentlyContinue)) {
         Register-SecretVault -Name $script:VAULT_NAME -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault
         Write-Host "[ok] Secret vault '$($script:VAULT_NAME)' registered." -ForegroundColor Green
     }
-
 
     # Test if vault is locked — if so, throw a clear error rather than
     # letting SecretStore prompt interactively (which blocks AI agents).
@@ -87,7 +135,7 @@ function Initialize-IPCSecretVault {
         }
     }
 
-        $script:_vaultInitialized = $true
+    $script:_vaultInitialized = $true
 }
 
 function Unlock-IPCVault {
