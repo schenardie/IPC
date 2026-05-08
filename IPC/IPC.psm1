@@ -111,11 +111,11 @@ function Initialize-IPCSecretVault {
         if ($usePassword) {
             Write-Host '[info] Configuring vault with password protection...' -ForegroundColor Cyan
             Write-Host '[info] You will be prompted to set your vault password now.' -ForegroundColor Cyan
-            Set-SecretStoreConfiguration -Authentication Password -Interaction Prompt -Confirm:$false -Force
+            Set-SecretStoreConfiguration -Authentication Password -Interaction Prompt -Confirm:$false
             Write-Host '[ok] Vault secured with a password.' -ForegroundColor Green
             Write-Host '[!] Run Unlock-IPCVault in your terminal before using the IPC agent or skill.' -ForegroundColor Yellow
         } else {
-            Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false -Force
+            Set-SecretStoreConfiguration -Authentication None -Interaction None -Confirm:$false
             Write-Host '[ok] Vault configured (no password) — always seamless.' -ForegroundColor Green
         }
     }
