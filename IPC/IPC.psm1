@@ -115,14 +115,11 @@ function Initialize-IPCSecretVault {
             Write-Host '[ok] Vault secured with a password.' -ForegroundColor Green
             Write-Host '[!] Run Unlock-IPCVault in your terminal before using the IPC agent or skill.' -ForegroundColor Yellow
         } else {
-            # Reset-SecretStore creates the vault from scratch with our settings,
-            # bypassing the macOS/Linux issue where Set-SecretStoreConfiguration
-            # initialises the store with the default (password-required) config
-            # first and then tries to change it — causing an unwanted password
-            # prompt. Reset-SecretStore applies our settings at creation time.
-            # -Confirm:$false suppresses the "all data will be lost" prompt
-            # (there is no data yet on a first run).
-            Reset-SecretStore -Authentication None -Interaction None -Confirm:$false
+            # -Force suppresses the ShouldContinue prompt on both Windows and macOS.
+            # (Unlike Set-SecretStoreConfiguration, Reset-SecretStore supports -Force
+            # cross-platform and applies settings at creation time — no default
+            # password-required initialisation race.)
+            Reset-SecretStore -Authentication None -Interaction None -Force
             Write-Host '[ok] Vault configured (no password) — always seamless.' -ForegroundColor Green
         }
     }
