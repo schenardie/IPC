@@ -66,18 +66,10 @@ function Initialize-IPCSecretVault {
 
     if ($script:_vaultInitialized) { return }
 
-    foreach ($mod in @('Microsoft.PowerShell.SecretManagement', 'Microsoft.PowerShell.SecretStore')) {
-        if (-not (Get-Module -ListAvailable -Name $mod)) {
-            Write-Host "[info] Installing $mod ..." -ForegroundColor Cyan
-            Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber
-        }
-        Import-Module $mod -ErrorAction Stop
-    }
-
-    # Detect first run by checking whether the SecretStore data directory
-    # exists. We deliberately avoid calling Get-SecretStoreConfiguration here
-    # because on macOS it creates the store using the default (password-
-    # required) config before we can configure it ourselves.
+    # IMPORTANT: Check for a new store BEFORE importing SecretStore.
+    # Import-Module creates the store directory as a side effect, which would
+    # cause the check to return false even on a brand new system, skipping the
+    # setup wizard and leaving the store in the default password-required state.
     $storePath = if ($IsWindows) {
         Join-Path ([System.Environment]::GetFolderPath('LocalApplicationData')) `
             'Microsoft' 'PowerShell' 'secretmanagement' 'localstore'
@@ -85,6 +77,14 @@ function Initialize-IPCSecretVault {
         Join-Path $HOME '.secretmanagement' 'localstore'
     }
     $isNewStore = -not (Test-Path $storePath)
+
+    foreach ($mod in @('Microsoft.PowerShell.SecretManagement', 'Microsoft.PowerShell.SecretStore')) {
+        if (-not (Get-Module -ListAvailable -Name $mod)) {
+            Write-Host "[info] Installing $mod ..." -ForegroundColor Cyan
+            Install-Module -Name $mod -Scope CurrentUser -Force -AllowClobber
+        }
+        Import-Module $mod -ErrorAction Stop
+    }
 
     if ($isNewStore) {
         $usePassword = $false
