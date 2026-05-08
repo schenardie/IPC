@@ -138,7 +138,7 @@ In both cases the token data on disk is ciphertext — opening the files in a he
 
 ### Is passwordless appropriate for IPC tokens?
 
-Yes, for the vast majority of users. The tokens IPC stores are **short-lived OAuth bearer tokens** (access tokens expire in ~1 hour; refresh tokens used by IPC expire in ~24 hours). Even in the worst case where a token is obtained, the attacker has a narrow window before it expires and Intune Read Only permissions are the blast radius.
+Yes, for the vast majority of users. The tokens IPC stores are **short-lived OAuth bearer tokens** (access tokens expire in ~1 hour; refresh tokens used by IPC expire in ~24 hours). Even in the worst case where a token is obtained, the attacker has a narrow window before it expires. You can further reduce exposure by authenticating as a **dedicated read-only account** — see [Permissions → Recommended: use a dedicated read-only account](#recommended-use-a-dedicated-read-only-account).
 
 Passwordless SecretStore is equivalent in security to your browser's saved-password store, macOS Keychain in an unlocked session, or Windows Credential Manager — all of which are standard practice for credential storage.
 
@@ -378,6 +378,20 @@ IPC uses Microsoft Intune's own public client ID (`5926fc8e-304e-4f59-8bed-58ca9
 The refresh token flow uses the Azure Portal application (`c44b4083-3bb0-49c1-b47d-974e53cbdf3c`) as a broker via the BroCI (Nested App Authentication) exchange.
 
 The signed-in user must have at least the **Microsoft Intune Read Only Operator** (or equivalent) role in Entra ID to query device inventory data.
+
+### Recommended: use a dedicated read-only account
+
+IPC only ever reads data — it never writes to Intune or modifies any device. We strongly recommend authenticating as a **dedicated service or user account scoped to the minimum required role**, rather than using your day-to-day admin account. This limits the blast radius if a stored token is ever compromised.
+
+| Role | Access granted | Recommended? |
+|------|---------------|--------------|
+| `Microsoft Intune Read Only Operator` | Read device inventory, managed devices | ✅ Minimum required |
+| `Global Reader` | Read-only across all Microsoft 365 services | ⚠ Works, but broader than needed |
+| `Intune Administrator` / `Global Administrator` | Full read/write Intune and beyond | ❌ Unnecessary — avoid |
+
+**What a compromised read-only token can expose:** device names, hardware specs, installed software, OS versions, and compliance state. It cannot be used to enrol/unenrol devices, push policies, wipe devices, or access user data outside of Intune inventory.
+
+If your organisation supports it, use a **dedicated break-glass or service account** (e.g. `svc-ipc-readonly@contoso.onmicrosoft.com`) assigned only the `Microsoft Intune Read Only Operator` role. This way the account has no mailbox, no licences, and no access to anything outside Intune inventory — the token is as low-risk as it can be.
 
 ---
 
