@@ -12,6 +12,7 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
 
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Vault setup](#vault-setup)
 - [Authentication](#authentication)
   - [Option 1a — Access token (from Network tab)](#option-1a--access-token-from-network-tab)
   - [Option 1b — Refresh token (from Session Storage)](#option-1b--refresh-token-from-session-storage)
@@ -35,7 +36,7 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
   - `Microsoft.PowerShell.SecretManagement`
   - `Microsoft.PowerShell.SecretStore`
 
-> **SecretStore password:** If you already have a SecretStore configured with a password (e.g. from another tool), SecretStore will prompt you to enter your existing password once per session. If this is your first time using SecretStore, IPC configures it as passwordless automatically.
+> **SecretStore:** On first run IPC will ask whether to protect the vault with a password. Choose **No** for seamless, agent-friendly operation. Choose **Yes** for encrypted-at-rest storage — you must run `Unlock-IPCVault` before each agent session.
 
 ---
 
@@ -47,6 +48,60 @@ cd IPC
 ```
 
 No build step required — run the CLI directly or import the module.
+
+---
+
+## Vault setup
+
+The first time you run `./cli/Start-IPC.ps1`, IPC sets up a **SecretStore vault** to hold your tokens securely. You will see a one-time prompt:
+
+```
+  ┌─ IPC Vault Setup ───────────────────────────────────┐
+  │                                                      │
+  │  Protect the secret vault with a password?           │
+  │                                                      │
+  │  [N] No  — passwordless, always seamless,            │
+  │           works with AI agents/skills out of the box │
+  │                                                      │
+  │  [y] Yes — encrypted vault; you must run             │
+  │           Unlock-IPCVault before each agent session  │
+  │                                                      │
+  └──────────────────────────────────────────────────────┘
+```
+
+| Choice | Behaviour | Best for |
+|--------|-----------|----------|
+| **No (default)** | Vault is never locked — tokens are always accessible without a prompt | Most users, AI agent / Copilot skill use |
+| **Yes** | Vault is encrypted with a password you set now. Run `Unlock-IPCVault` in your terminal once before using the IPC agent or skill each session. The vault stays unlocked for 8 hours. | High-security environments where you want stored tokens encrypted at rest |
+
+> This prompt appears **once only**. The choice is persisted by SecretStore. If you later want to change it, see [Resetting the vault](#resetting-the-vault) below.
+
+### Unlocking a password-protected vault
+
+If you chose a password, unlock the vault before starting an agent or skill session:
+
+```powershell
+Import-Module ./IPC/IPC.psm1
+Unlock-IPCVault    # prompts for your password, stays unlocked for 8 hours
+```
+
+### Resetting the vault
+
+To wipe the vault and start over (e.g. to change the password setting):
+
+```powershell
+# PowerShell 7
+Import-Module Microsoft.PowerShell.SecretStore
+Remove-SecretStore -Force
+```
+
+Or delete the store files directly (macOS/Linux):
+
+```bash
+rm -rf ~/.secretmanagement
+```
+
+> ⚠ This removes all stored tokens. Re-enter them via options `1a` or `1b` after the reset.
 
 ---
 
@@ -194,6 +249,7 @@ Invoke-IPC -Action ListDevices
 | Scenario | What happens | What you need to do |
 |----------|-------------|-------------------|
 | **First time** | No token stored | Authenticate with Method A or B above |
+| **Vault is password-protected** | Vault locked — agent calls will fail | Run `Unlock-IPCVault` in your terminal first |
 | **Within 1 hour** | Access token is valid | Nothing — calls work automatically |
 | **After 1 hour (with refresh token)** | Access token expired | Nothing — auto-refreshes silently via BroCI |
 | **After 24 hours (with refresh token)** | Refresh token expired | Re-authenticate: get a fresh refresh token from Session Storage |
