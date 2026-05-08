@@ -13,6 +13,7 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
 - [Requirements](#requirements)
 - [Installation](#installation)
 - [Vault setup](#vault-setup)
+- [Vault security](#vault-security)
 - [Authentication](#authentication)
   - [Option 1a — Access token (from Network tab)](#option-1a--access-token-from-network-tab)
   - [Option 1b — Refresh token (from Session Storage)](#option-1b--refresh-token-from-session-storage)
@@ -102,6 +103,46 @@ rm -rf ~/.secretmanagement
 ```
 
 > ⚠ This removes all stored tokens. Re-enter them via options `1a` or `1b` after the reset.
+
+---
+
+## Vault security
+
+### The short answer
+
+**Your tokens are encrypted on disk regardless of whether you set a vault password or not.** Choosing "no password" does not mean "no encryption" — it means the encryption key is managed by your operating system rather than by a separate password you type.
+
+### How SecretStore encrypts your data
+
+`Microsoft.PowerShell.SecretStore` is an open-source module published by Microsoft. It always encrypts vault contents using **AES-256** before writing anything to disk. What differs between the two modes is how the AES key itself is protected:
+
+| Mode | How the AES key is protected |
+|------|------------------------------|
+| **Passwordless** | Windows: key is wrapped by **DPAPI** (Data Protection API), tied to your Windows user account and machine. macOS/Linux: key file stored at `~/.secretmanagement/` with **`600` permissions** (owner read/write only). |
+| **Password-protected** | The AES key is derived from your vault password using a key-derivation function. Without the password the key cannot be reconstructed. |
+
+In both cases the token data on disk is ciphertext — opening the files in a hex editor reveals nothing useful.
+
+### What passwordless protects against
+
+- ✅ **Other users on the same machine** — DPAPI (Windows) and file permissions (macOS/Linux) prevent other OS accounts from reading the store files
+- ✅ **Plain-text exposure** — tokens are never written to `.env` files, config files, shell history, or environment variables
+- ✅ **Accidental leaks** — no risk of committing a secrets file to source control
+- ✅ **Log/output scraping** — tokens stored in the vault are never echoed to the terminal
+
+### What passwordless does not protect against
+
+- ❌ **Processes running as your own user** — malware or a rogue script running in your user session can call the same SecretStore APIs and read the vault
+- ❌ **Root/Administrator access** — a system administrator can read the key files on macOS/Linux (same limitation as macOS Keychain when unlocked)
+- ❌ **Physical disk access** — an attacker with the raw disk and knowledge of the key file location could reconstruct the secrets (this is also true of most OS-level credential stores)
+
+### Is passwordless appropriate for IPC tokens?
+
+Yes, for the vast majority of users. The tokens IPC stores are **short-lived OAuth bearer tokens** (access tokens expire in ~1 hour; refresh tokens used by IPC expire in ~24 hours). Even in the worst case where a token is obtained, the attacker has a narrow window before it expires and Intune Read Only permissions are the blast radius.
+
+Passwordless SecretStore is equivalent in security to your browser's saved-password store, macOS Keychain in an unlocked session, or Windows Credential Manager — all of which are standard practice for credential storage.
+
+Use the **password-protected** option if you are on a shared or managed machine where other administrators may have access to your user profile, or if your security policy explicitly requires credentials to be encrypted with a secret not derived from your OS login.
 
 ---
 
