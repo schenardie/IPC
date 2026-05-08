@@ -115,10 +115,11 @@ function Initialize-IPCSecretVault {
             Write-Host '[ok] Vault secured with a password.' -ForegroundColor Green
             Write-Host '[!] Run Unlock-IPCVault in your terminal before using the IPC agent or skill.' -ForegroundColor Yellow
         } else {
-            # -Force suppresses the ShouldContinue prompt on both Windows and macOS.
-            # (Unlike Set-SecretStoreConfiguration, Reset-SecretStore supports -Force
-            # cross-platform and applies settings at creation time — no default
-            # password-required initialisation race.)
+            # Ensure the localstore directory exists before Reset-SecretStore runs.
+            # On some module versions (e.g. 1.0.6) Reset-SecretStore throws if the
+            # directory is absent even when creating a brand new store.
+            New-Item -ItemType Directory -Path $storePath -Force | Out-Null
+            # -Force suppresses the ShouldContinue prompt cross-platform.
             Reset-SecretStore -Authentication None -Interaction None -Force
             Write-Host '[ok] Vault configured (no password) — always seamless.' -ForegroundColor Green
         }
