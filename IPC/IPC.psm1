@@ -1407,6 +1407,7 @@ function Clear-IPCTokens {
 
 Export-ModuleMember -Function @(
     'Initialize-IPCSecretVault'
+    'Unlock-IPCVault'
     'ConvertFrom-JwtPayload'
     'Resolve-AccessToken'
     'ConvertTo-FriendlyName'
