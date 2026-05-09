@@ -37,7 +37,7 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
   - `Microsoft.PowerShell.SecretManagement`
   - `Microsoft.PowerShell.SecretStore`
 
-> **SecretStore:** On first run IPC will ask whether to protect the vault with a password. Choose **No** for seamless, agent-friendly operation. Choose **Yes** for encrypted-at-rest storage — you must run `Unlock-IPCVault` before each agent session.
+> **SecretStore:** On first run IPC will ask whether to protect the vault with a password. Choose **No** for seamless, agent-friendly operation. Choose **Yes** for CLI-only use with encrypted-at-rest storage (incompatible with AI agents/skills — see [Vault setup](#vault-setup)).
 
 ---
 
@@ -64,8 +64,8 @@ The first time you run `./cli/Start-IPC.ps1`, IPC sets up a **SecretStore vault*
   │  [N] No  — passwordless, always seamless,            │
   │           works with AI agents/skills out of the box │
   │                                                      │
-  │  [y] Yes — encrypted vault; you must run             │
-  │           Unlock-IPCVault before each agent session  │
+  │  [y] Yes — encrypted vault; CLI use only,            │
+  │           NOT compatible with AI agents/skills       │
   │                                                      │
   └──────────────────────────────────────────────────────┘
 ```
@@ -73,17 +73,22 @@ The first time you run `./cli/Start-IPC.ps1`, IPC sets up a **SecretStore vault*
 | Choice | Behaviour | Best for |
 |--------|-----------|----------|
 | **No (default)** | Vault is never locked — tokens are always accessible without a prompt | Most users, AI agent / Copilot skill use |
-| **Yes** | Vault is encrypted with a password you set now. Run `Unlock-IPCVault` in your terminal once before using the IPC agent or skill each session. The vault stays unlocked for 8 hours. | High-security environments where you want stored tokens encrypted at rest |
+| **Yes** | Vault is encrypted with a password you set now. **Only works with the interactive CLI** — AI agents/skills run in a separate process so the unlock state cannot be shared. | CLI-only workflows where you want stored tokens encrypted at rest |
+
+> ⚠️ **If you use IPC with an AI agent or Copilot skill, always choose No (passwordless).** The agent spawns a new PowerShell process for each call, so a vault unlocked in your terminal is not visible to the agent process.
 
 > This prompt appears **once only**. The choice is persisted by SecretStore. If you later want to change it, see [Resetting the vault](#resetting-the-vault) below.
 
-### Unlocking a password-protected vault
+### Using a password-protected vault (CLI only)
 
-If you chose a password, unlock the vault before starting an agent or skill session:
+> ⚠️ Password-protected vaults **cannot** be used with the AI agent or Copilot skill. The agent spawns a new process per call — the unlock state from your terminal does not carry over. Use passwordless mode for any agent/skill workflow.
+
+If you chose a password and are using the **interactive CLI only**, unlock the vault before running it:
 
 ```powershell
 Import-Module ./IPC/IPC.psm1
 Unlock-IPCVault    # prompts for your password, stays unlocked for 8 hours
+./cli/Start-IPC.ps1
 ```
 
 ### Resetting the vault
@@ -290,7 +295,7 @@ Invoke-IPC -Action ListDevices
 | Scenario | What happens | What you need to do |
 |----------|-------------|-------------------|
 | **First time** | No token stored | Authenticate with Method A or B above |
-| **Vault is password-protected** | Vault locked — agent calls will fail | Run `Unlock-IPCVault` in your terminal first |
+| **Vault is password-protected** | Agent calls will fail — vault unlock state is process-scoped | Switch to passwordless: reset the vault (see [Resetting the vault](#resetting-the-vault)) |
 | **Within 1 hour** | Access token is valid | Nothing — calls work automatically |
 | **After 1 hour (with refresh token)** | Access token expired | Nothing — auto-refreshes silently via BroCI |
 | **After 24 hours (with refresh token)** | Refresh token expired | Re-authenticate: get a fresh refresh token from Session Storage |

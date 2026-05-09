@@ -144,7 +144,17 @@ function Initialize-IPCSecretVault {
         Get-Secret -Name '__ipc_test__' -Vault $script:VAULT_NAME -ErrorAction Ignore | Out-Null
     } catch {
         if ($_.Exception.Message -match 'locked|password|PasswordRequired') {
-            throw "IPC vault is locked. Run 'Unlock-IPCVault' in your terminal first, then retry."
+            throw @"
+IPC vault is password-protected and locked.
+The AI skill/agent runs in a separate process so Unlock-IPCVault cannot help here.
+
+To use IPC with AI agents, switch to a passwordless vault:
+  1. Remove-Item -Recurse -Force ~/.secretmanagement   # macOS/Linux
+     (Windows: Remove-Item -Recurse -Force `$env:LOCALAPPDATA\Microsoft\PowerShell\secretmanagement)
+  2. Re-run ./cli/Start-IPC.ps1 and choose [N] (no password)
+
+The passwordless vault is still AES-256 encrypted — only the key management differs.
+"@
         }
     }
 

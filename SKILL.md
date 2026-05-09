@@ -21,15 +21,12 @@ IPC queries hardware and software inventory from Microsoft Intune managed device
 ```powershell
 Import-Module ./IPC/IPC.psm1
 
-# If the vault is password-protected, unlock it first (passwordless vaults skip this)
-Unlock-IPCVault
-
 # Authenticate (one of these — refresh token is preferred for long sessions)
 Set-IPCRefreshToken -RefreshToken '<secret from browser Session Storage>'
 Set-IPCAccessToken -AccessToken '<bearer token from browser Network tab>'
 ```
 
-> **Vault modes:** On first run via the CLI, users choose between a **passwordless** vault (seamless, recommended for agent use) or a **password-protected** vault (encrypted at rest). If the user chose password protection, `Unlock-IPCVault` must be run interactively before the agent session starts. The vault stays unlocked for 8 hours. Passwordless vaults require no unlock step.
+> **Vault modes:** On first run via the CLI, users choose between a **passwordless** vault (seamless, required for agent use) or a **password-protected** vault (CLI-only, incompatible with the agent). The agent spawns a new PowerShell process per call — vault unlock state is process-scoped and cannot be shared from the user's terminal. **If a user reports that the agent fails with a vault-locked error, instruct them to reset the vault and choose No (passwordless) at the setup prompt.**
 
 ## Invoke-IPC Parameters
 
