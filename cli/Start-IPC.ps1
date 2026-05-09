@@ -22,46 +22,11 @@ Import-Module $modulePath -Force
 
 function Read-MaskedInput {
     param([string]$Prompt = 'Input')
-    Write-Host "$Prompt" -NoNewline
-    $chars = [System.Collections.Generic.List[char]]::new()
-
-    if ($IsWindows) {
-        while ($true) {
-            $key = [System.Console]::ReadKey($true)
-            if ($key.Key -eq 'Enter') { Write-Host; break }
-            if ($key.Key -eq 'Backspace') {
-                if ($chars.Count -gt 0) {
-                    $chars.RemoveAt($chars.Count - 1)
-                    Write-Host "`b `b" -NoNewline
-                }
-            } else {
-                $chars.Add($key.KeyChar)
-                Write-Host '*' -NoNewline
-            }
-        }
-    } else {
-        # macOS / Linux — use stty raw
-        try {
-            $null = & stty -echo raw 2>&1
-            while ($true) {
-                $ch = [char][System.Console]::Read()
-                if ($ch -eq "`r" -or $ch -eq "`n") { Write-Host; break }
-                if ([int]$ch -eq 127 -or [int]$ch -eq 8) {
-                    if ($chars.Count -gt 0) {
-                        $chars.RemoveAt($chars.Count - 1)
-                        Write-Host "`b `b" -NoNewline
-                    }
-                } else {
-                    $chars.Add($ch)
-                    Write-Host '*' -NoNewline
-                }
-            }
-        } finally {
-            $null = & stty echo cooked 2>&1
-        }
-    }
-
-    return -join $chars
+    # Read-Host -AsSecureString is handled natively by PowerShell on all platforms.
+    # It correctly masks both typed and pasted input (unlike stty raw on macOS which
+    # can echo paste bursts before suppression takes effect).
+    $secure = Read-Host -Prompt $Prompt -AsSecureString
+    return [System.Net.NetworkCredential]::new('', $secure).Password
 }
 
 function Copy-ToClipboard {
