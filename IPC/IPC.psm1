@@ -91,17 +91,21 @@ function Initialize-IPCSecretVault {
 
         if ($Interactive) {
             Write-Host ''
-            Write-Host '  ┌─ IPC Vault Setup ───────────────────────────────────┐' -ForegroundColor Cyan
-            Write-Host '  │                                                      │' -ForegroundColor Cyan
-            Write-Host '  │  Protect the secret vault with a password?           │' -ForegroundColor Cyan
-            Write-Host '  │                                                      │' -ForegroundColor Cyan
-            Write-Host '  │  [N] No  — passwordless, always seamless,            │' -ForegroundColor Green
-            Write-Host '  │           works with AI agents/skills out of the box │' -ForegroundColor Green
-            Write-Host '  │                                                      │' -ForegroundColor Cyan
-            Write-Host '  │  [y] Yes — encrypted vault; you must run             │' -ForegroundColor Yellow
-            Write-Host '  │           Unlock-IPCVault before each agent session  │' -ForegroundColor Yellow
-            Write-Host '  │                                                      │' -ForegroundColor Cyan
-            Write-Host '  └──────────────────────────────────────────────────────┘' -ForegroundColor Cyan
+            Write-Host '  ┌─ IPC Vault Setup ───────────────────────────────────────────┐' -ForegroundColor Cyan
+            Write-Host '  │                                                               │' -ForegroundColor Cyan
+            Write-Host '  │  Protect the secret vault with a password?                   │' -ForegroundColor Cyan
+            Write-Host '  │                                                               │' -ForegroundColor Cyan
+            Write-Host '  │  [N] No  — passwordless (RECOMMENDED)                        │' -ForegroundColor Green
+            Write-Host '  │           Tokens always accessible, no prompts.               │' -ForegroundColor Green
+            Write-Host '  │           Works with AI agents and Copilot skills.            │' -ForegroundColor Green
+            Write-Host '  │                                                               │' -ForegroundColor Cyan
+            Write-Host '  │  [y] Yes — password-protected (CLI USE ONLY)                 │' -ForegroundColor Yellow
+            Write-Host '  │           Tokens encrypted with a password you set now.      │' -ForegroundColor Yellow
+            Write-Host '  │           ⚠ NOT compatible with AI agents or Copilot skills. │' -ForegroundColor Red
+            Write-Host '  │           The unlock state is process-scoped — agents run    │' -ForegroundColor Red
+            Write-Host '  │           in a new process and cannot see your unlock.       │' -ForegroundColor Red
+            Write-Host '  │                                                               │' -ForegroundColor Cyan
+            Write-Host '  └───────────────────────────────────────────────────────────────┘' -ForegroundColor Cyan
             Write-Host ''
             $answer = Read-Host '  Password-protect vault? [y/N]'
             $usePassword = $answer.Trim().ToLower() -eq 'y'

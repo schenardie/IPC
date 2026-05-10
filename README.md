@@ -57,17 +57,21 @@ No build step required — run the CLI directly or import the module.
 The first time you run `./cli/Start-IPC.ps1`, IPC sets up a **SecretStore vault** to hold your tokens securely. You will see a one-time prompt:
 
 ```
-  ┌─ IPC Vault Setup ───────────────────────────────────┐
-  │                                                      │
-  │  Protect the secret vault with a password?           │
-  │                                                      │
-  │  [N] No  — passwordless, always seamless,            │
-  │           works with AI agents/skills out of the box │
-  │                                                      │
-  │  [y] Yes — encrypted vault; CLI use only,            │
-  │           NOT compatible with AI agents/skills       │
-  │                                                      │
-  └──────────────────────────────────────────────────────┘
+  ┌─ IPC Vault Setup ───────────────────────────────────────────┐
+  │                                                               │
+  │  Protect the secret vault with a password?                   │
+  │                                                               │
+  │  [N] No  — passwordless (RECOMMENDED)                        │
+  │           Tokens always accessible, no prompts.               │
+  │           Works with AI agents and Copilot skills.            │
+  │                                                               │
+  │  [y] Yes — password-protected (CLI USE ONLY)                 │
+  │           Tokens encrypted with a password you set now.      │
+  │           ⚠ NOT compatible with AI agents or Copilot skills. │
+  │           The unlock state is process-scoped — agents run    │
+  │           in a new process and cannot see your unlock.       │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
 ```
 
 | Choice | Behaviour | Best for |
