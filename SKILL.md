@@ -32,11 +32,17 @@ IPC queries hardware and software inventory from Microsoft Intune managed device
 pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module -Name IPC -Scope CurrentUser -Force }; Import-Module IPC; Invoke-IPC -Action ListDevices"
 ```
 
-> **Authentication is handled by the user, not the agent.** The user stores tokens interactively via the CLI (`./cli/Start-IPC.ps1`) or `Read-Host -AsSecureString` before invoking the agent. The agent only calls query functions (`Invoke-IPC`, `Get-IPCTokenInfo`) - it must **never** ask for, accept, or handle tokens directly.
+> **Authentication is handled by the user, not the agent.** The user stores tokens interactively before invoking the agent. The agent only calls query functions (`Invoke-IPC`, `Get-IPCTokenInfo`) - it must **never** ask for, accept, or handle tokens directly.
 
-> **If the agent gets a "No token" or "expired" error**, instruct the user to authenticate interactively:
-> 1. Run `./cli/Start-IPC.ps1` and use option **1b** (refresh token) or **1a** (access token).
-> 2. Then retry the agent query.
+> **If the agent gets a "No token" or "expired" error**, instruct the user to authenticate by running these commands in a PowerShell 7 terminal:
+> ```powershell
+> Import-Module IPC
+> # Option 1 (recommended) - refresh token from browser Session Storage (auto-refreshes for ~24h)
+> Set-IPCRefreshToken -RefreshToken (Read-Host 'Paste refresh token' -AsSecureString) -Tenant 'contoso.onmicrosoft.com'
+> # Option 2 - access token from browser Network tab (expires in ~1h, no auto-refresh)
+> Set-IPCAccessToken -AccessToken (Read-Host 'Paste access token' -AsSecureString)
+> ```
+> Then retry the agent query.
 
 > **Vault requirement:** The vault must be **passwordless** for agent use. The agent spawns a new PowerShell process per call - vault unlock state is process-scoped and cannot be shared from the user's terminal. **If a user reports that the agent fails with a vault-locked error, instruct them to reset the vault and choose No (passwordless) at the setup prompt.**
 
