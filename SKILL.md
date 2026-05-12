@@ -21,14 +21,15 @@ IPC queries hardware and software inventory from Microsoft Intune managed device
 > **IMPORTANT - PowerShell 7 required.** This module uses `#Requires -Version 7.0`. The default `powershell` tool often launches Windows PowerShell 5.1, which will fail. **Always run commands through `pwsh`:**
 >
 > ```
-> pwsh -Command "Import-Module ./IPC/IPC.psm1; <your commands here>"
+> pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module -Name IPC -Scope CurrentUser -Force }; Import-Module IPC; <your commands here>"
 > ```
 >
 > If `pwsh` returns "Access is denied", try the full path: `& 'C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\pwsh.exe' -Command "..."` or locate it with `Get-Command pwsh.exe`.
 
 ```powershell
 # All commands must run inside pwsh (PowerShell 7)
-pwsh -Command "Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action ListDevices"
+# The module is auto-installed from PSGallery if not already present
+pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module -Name IPC -Scope CurrentUser -Force }; Import-Module IPC; Invoke-IPC -Action ListDevices"
 ```
 
 > **Authentication is handled by the user, not the agent.** The user stores tokens interactively via the CLI (`./cli/Start-IPC.ps1`) or `Read-Host -AsSecureString` before invoking the agent. The agent only calls query functions (`Invoke-IPC`, `Get-IPCTokenInfo`) - it must **never** ask for, accept, or handle tokens directly.
@@ -124,14 +125,14 @@ For advanced usage, the module also exports individual functions (all must run i
 
 ```powershell
 # Direct device lookup
-pwsh -Command "Import-Module ./IPC/IPC.psm1; Get-IPCManagedDevices -Filter \"startswith(deviceName,'LAPTOP')\""
+pwsh -Command "Import-Module IPC; Get-IPCManagedDevices -Filter \"startswith(deviceName,'LAPTOP')\""
 
 # Direct inventory fetch
-pwsh -Command "Import-Module ./IPC/IPC.psm1; Get-IPCDeviceInventory -DeviceId '$deviceId' -Category 'battery'"
+pwsh -Command "Import-Module IPC; Get-IPCDeviceInventory -DeviceId '$deviceId' -Category 'battery'"
 
 # Direct software inventory
-pwsh -Command "Import-Module ./IPC/IPC.psm1; Get-IPCSoftwareInventory -DeviceId '$deviceId'"
+pwsh -Command "Import-Module IPC; Get-IPCSoftwareInventory -DeviceId '$deviceId'"
 
 # Batch operations
-pwsh -Command "Import-Module ./IPC/IPC.psm1; Get-IPCInventoryBatch -DeviceIds @('$id1', '$id2') -Categories @('bios', 'battery')"
+pwsh -Command "Import-Module IPC; Get-IPCInventoryBatch -DeviceIds @('$id1', '$id2') -Categories @('bios', 'battery')"
 ```
