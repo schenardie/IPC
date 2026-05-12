@@ -1,6 +1,6 @@
 # IPC
 
-[![PSGallery](https://img.shields.io/powershellgallery/v/IPC?label=PSGallery&logo=powershell)](https://www.powershellgallery.com/packages/IPC)
+[![PSGallery](https://img.shields.io/powershellgallery/v/IPC?label=PSGallery&logo=powershell)](https://www.powershellgallery.com/packages/IPC) ![PowerShell Gallery](https://img.shields.io/powershellgallery/dt/IPC)
 
 **IPC (Intune Properties Catalog)** - an interactive CLI and PowerShell module for querying hardware and software inventory from Intune managed devices via the Microsoft Graph beta API.
 
