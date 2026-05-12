@@ -11,6 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install required modules
+        shell: pwsh
+        run: |
+          Install-Module -Name Microsoft.PowerShell.SecretManagement -Scope CurrentUser -Force
+          Install-Module -Name Microsoft.PowerShell.SecretStore -Scope CurrentUser -Force
+
       - name: Publish Module
         shell: pwsh
         run: |
