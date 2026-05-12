@@ -14,9 +14,17 @@
 
 $ErrorActionPreference = 'Stop'
 
-# Import the module from the same directory
-$modulePath = Join-Path $PSScriptRoot '..' 'IPC' 'IPC.psm1'
-Import-Module $modulePath -Force
+# Use local module if running from the repo, otherwise install from PSGallery
+$localModule = Join-Path $PSScriptRoot '..' 'IPC' 'IPC.psm1'
+if (Test-Path $localModule) {
+    Import-Module $localModule -Force
+} else {
+    if (-not (Get-Module -ListAvailable -Name IPC)) {
+        Write-Host '[info] Installing IPC module from PowerShell Gallery...' -ForegroundColor Cyan
+        Install-Module -Name IPC -Scope CurrentUser -Force
+    }
+    Import-Module IPC -Force
+}
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
