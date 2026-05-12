@@ -1,0 +1,435 @@
+# IPC
+
+[![PSGallery](https://img.shields.io/powershellgallery/v/IPC?label=PSGallery&logo=powershell)](https://www.powershellgallery.com/packages/IPC)
+
+**IPC (Intune Properties Catalog)** - an interactive CLI and PowerShell module for querying hardware and software inventory from Intune managed devices via the Microsoft Graph beta API.
+
+No Azure app registration is required. IPC uses Microsoft Intune's own well-known public client ID, so it works with any Entra ID tenant where a user holds at least the **Intune Read Only** role.
+
+---
+
+## Contents
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Vault setup](#vault-setup)
+- [Vault security](#vault-security)
+- [Authentication](#authentication)
+  - [Option 1a - Access token (from Network tab)](#option-1a---access-token-from-network-tab)
+  - [Option 1b - Refresh token (from Session Storage)](#option-1b---refresh-token-from-session-storage)
+  - [Option 1c - Clear all tokens](#option-1c---clear-all-tokens)
+- [Usage - CLI](#usage---cli)
+  - [Menu options](#menu-options)
+  - [Device inventory](#device-inventory)
+  - [Software inventory](#software-inventory)
+- [Usage - PowerShell module](#usage---powershell-module)
+- [Usage - AI agent (Invoke-IPC)](#usage---ai-agent-invoke-ipc)
+- [Running tests](#running-tests)
+- [Permissions](#permissions)
+
+---
+
+## Requirements
+
+- **PowerShell 7.0** or later (cross-platform: Windows & macOS)
+- An Intune-managed tenant with at least **Intune Read Only** permissions
+- The following PowerShell modules (auto-installed on first run):
+  - `Microsoft.PowerShell.SecretManagement`
+  - `Microsoft.PowerShell.SecretStore`
+
+> **SecretStore:** On first run IPC will ask whether to protect the vault with a password. Choose **No** for seamless, agent-friendly operation. Choose **Yes** for CLI-only use with encrypted-at-rest storage (incompatible with AI agents/skills - see [Vault setup](#vault-setup)).
+
+---
+
+## Installation
+
+```powershell
+git clone https://github.com/schenardie/IPC.git
+cd IPC
+```
+
+No build step required - run the CLI directly or import the module.
+
+---
+
+## Vault setup
+
+The first time you run `./cli/Start-IPC.ps1`, IPC sets up a **SecretStore vault** to hold your tokens securely. You will see a one-time prompt:
+
+```
+  ┌─ IPC Vault Setup ─────────────────────────────────────────────┐
+  │                                                               │
+  │  Protect the secret vault with a password?                    │
+  │                                                               │
+  │  [N] No  - passwordless (RECOMMENDED)                         │
+  │           Tokens always accessible, no prompts.               │
+  │           Works with AI agents and Copilot skills.            │
+  │                                                               │
+  │  [y] Yes - password-protected (CLI USE ONLY)                  │
+  │           Tokens encrypted with a password you set now.       │
+  │           NOT compatible with AI agents or Copilot skills.    │
+  │           The unlock state is process-scoped - agents run     │
+  │           in a new process and cannot see your unlock.        │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
+```
+
+| Choice | Behaviour | Best for |
+|--------|-----------|----------|
+| **No (default)** | Vault is never locked - tokens are always accessible without a prompt | Most users, AI agent / Copilot skill use |
+| **Yes** | Vault is encrypted with a password you set now. **Only works with the interactive CLI** - AI agents/skills run in a separate process so the unlock state cannot be shared. | CLI-only workflows where you want stored tokens encrypted at rest |
+
+> ⚠️ **If you use IPC with an AI agent or Copilot skill, always choose No (passwordless).** The agent spawns a new PowerShell process for each call, so a vault unlocked in your terminal is not visible to the agent process.
+
+> This prompt appears **once only**. The choice is persisted by SecretStore. If you later want to change it, see [Resetting the vault](#resetting-the-vault) below.
+
+### Using a password-protected vault (CLI only)
+
+> ⚠️ Password-protected vaults **cannot** be used with the AI agent or Copilot skill. The agent spawns a new process per call - the unlock state from your terminal does not carry over. Use passwordless mode for any agent/skill workflow.
+
+If you chose a password and are using the **interactive CLI only**, unlock the vault before running it:
+
+```powershell
+Import-Module ./IPC/IPC.psm1
+Unlock-IPCVault    # prompts for your password, stays unlocked for 8 hours
+./cli/Start-IPC.ps1
+```
+
+### Resetting the vault
+
+To clear IPC's stored tokens and start fresh (without affecting other tools that use SecretStore):
+
+```powershell
+# PowerShell 7
+Import-Module ./IPC/IPC.psm1
+Clear-IPCTokens
+Unregister-SecretVault -Name IPCVault -ErrorAction SilentlyContinue
+```
+
+Re-run `./cli/Start-IPC.ps1` and IPC will re-register its vault automatically.
+
+> **If you also need to change the SecretStore password setting** (e.g. switch from password to passwordless), you must reset the entire SecretStore. ⚠ This will erase **all** secrets in the store, including those from other tools:
+
+```powershell
+Import-Module Microsoft.PowerShell.SecretManagement
+Import-Module Microsoft.PowerShell.SecretStore
+Unregister-SecretVault -Name IPCVault -ErrorAction SilentlyContinue
+Reset-SecretStore -Force -Authentication None -Interaction None
+```
+
+On Windows you can also delete the store files directly:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Microsoft\PowerShell\secretmanagement"
+```
+
+Or on macOS/Linux:
+
+```bash
+rm -rf ~/.secretmanagement
+```
+
+> ⚠ This removes all stored tokens. Re-enter them via options `1a` or `1b` after the reset.
+
+---
+
+## Vault security
+
+### The short answer
+
+**Your tokens are encrypted on disk regardless of whether you set a vault password or not.** Choosing "no password" does not mean "no encryption" - it means the encryption key is managed by your operating system rather than by a separate password you type.
+
+### How SecretStore encrypts your data
+
+`Microsoft.PowerShell.SecretStore` is an open-source module published by Microsoft. It always encrypts vault contents using **AES-256** before writing anything to disk. What differs between the two modes is how the AES key itself is protected:
+
+| Mode | How the AES key is protected |
+|------|------------------------------|
+| **Passwordless** | Windows: key is wrapped by **DPAPI** (Data Protection API), tied to your Windows user account and machine. macOS/Linux: key file stored at `~/.secretmanagement/` with **`600` permissions** (owner read/write only). |
+| **Password-protected** | The AES key is derived from your vault password using a key-derivation function. Without the password the key cannot be reconstructed. |
+
+In both cases the token data on disk is ciphertext - opening the files in a hex editor reveals nothing useful.
+
+### What passwordless protects against
+
+- ✅ **Other users on the same machine** - DPAPI (Windows) and file permissions (macOS/Linux) prevent other OS accounts from reading the store files
+- ✅ **Plain-text exposure** - tokens are never written to `.env` files, config files, shell history, or environment variables
+- ✅ **Accidental leaks** - no risk of committing a secrets file to source control
+- ✅ **Log/output scraping** - tokens stored in the vault are never echoed to the terminal
+
+### What passwordless does not protect against
+
+- ❌ **Processes running as your own user** - malware or a rogue script running in your user session can call the same SecretStore APIs and read the vault
+- ❌ **Root/Administrator access** - a system administrator can read the key files on macOS/Linux (same limitation as macOS Keychain when unlocked)
+- ❌ **Physical disk access** - an attacker with the raw disk and knowledge of the key file location could reconstruct the secrets (this is also true of most OS-level credential stores)
+
+### Is passwordless appropriate for IPC tokens?
+
+Yes, for the vast majority of users. The tokens IPC stores are **short-lived OAuth bearer tokens** (access tokens expire in ~1 hour; refresh tokens expire after ~24 hours of inactivity, but are automatically rotated on each use). Even in the worst case where a token is obtained, the attacker has a narrow window before it expires. You can further reduce exposure by authenticating as a **dedicated read-only account** - see [Permissions → Recommended: use a dedicated read-only account](#recommended-use-a-dedicated-read-only-account).
+
+Passwordless SecretStore is equivalent in security to your browser's saved-password store, macOS Keychain in an unlocked session, or Windows Credential Manager - all of which are standard practice for credential storage.
+
+Use the **password-protected** option if you are on a shared or managed machine where other administrators may have access to your user profile, or if your security policy explicitly requires credentials to be encrypted with a secret not derived from your OS login.
+
+---
+
+## Authentication
+
+IPC supports two authentication methods. Only one is active at a time - storing a new token clears the other to prevent cross-tenant issues.
+
+### Option 1a - Access token (from Network tab)
+
+Short-lived token that lasts until it expires (typically ~1 hour). No auto-refresh.
+
+1. Open [https://intune.microsoft.com](https://intune.microsoft.com) in your browser and sign in.
+2. Open browser DevTools (F12) → **Network** tab.
+3. Filter for requests to `graph.microsoft.com` and copy the `Authorization: Bearer <token>` value.
+4. Start IPC and use **option 1a** to paste the token.
+
+### Option 1b - Refresh token (from Session Storage)
+
+Long-lived token that allows IPC to automatically acquire fresh access tokens via the BroCI (Nested App Authentication) flow. Each time IPC refreshes, the refresh token is **rotated** (replaced with a new one in the vault). As long as IPC is used at least once every ~24 hours, the session stays alive indefinitely.
+
+1. Open [https://intune.microsoft.com](https://intune.microsoft.com) in your browser and sign in.
+2. Open browser DevTools (F12) → **Application** tab → **Session Storage**.
+3. Look for an MSAL entry with `credentialType: "RefreshToken"`.
+4. Copy the `secret` field value.
+5. Start IPC and use **option 1b**.
+6. Enter your tenant domain (e.g. `contoso.onmicrosoft.com`) or tenant GUID.
+7. Paste the refresh token secret.
+
+IPC exchanges the refresh token for a fresh Intune access token using the Azure Portal as a broker. The refresh token is **rotated** on each exchange - the old token is replaced with a new one in the vault, resetting the ~24-hour expiry window.
+
+### Option 1c - Clear all tokens
+
+Removes all stored tokens (access, refresh, metadata, tenant) from the vault. Use this when switching tenants or accounts.
+
+Tokens are stored securely using the PowerShell `SecretStore` vault (encrypted, cross-platform).
+
+---
+
+## Usage - CLI
+
+```powershell
+./cli/Start-IPC.ps1
+```
+
+### Menu options
+
+```
+╔══════════════════════════════════════════════════╗
+║           IPC - Device Inventory                 ║
+╠══════════════════════════════════════════════════╣
+║  1a  Store access token  (from Network tab)      ║
+║  1b  Store refresh token (from Session Storage)  ║
+║  1c  Clear all tokens                            ║
+║  2   Get device inventory                        ║
+║  3   Get software inventory                      ║
+║  q   Quit                                        ║
+╚══════════════════════════════════════════════════╝
+```
+
+The status display shows the current token state:
+
+```
+  Status : ✔  Valid
+  Type   : Refresh (auto-refresh enabled)
+  User   : admin@contoso.com
+  Tenant : 6babcaad-604b-40ac-a9d7-9fd97c0b779f
+  Expiry : 2026-05-06 02:10:01 UTC (1h 10m)
+```
+
+### Device inventory
+
+Option **2** lets you:
+
+1. Search for a Windows device by partial name (or paste a device GUID directly).
+2. Choose one device or all matching devices.
+3. Pick from the inventory categories available for that device (e.g. `battery`, `diskDrive`, `processor`, `operatingSystem`).
+4. Select individual categories or `all`.
+
+Results are printed as JSON and can optionally be copied to the clipboard.
+
+### Software inventory
+
+Option **3** queries the `ApplicationProperties` inventory category, which returns all installed applications on a device. It uses the Graph endpoint:
+
+```
+GET /beta/deviceManagement/managedDevices('{id}')/deviceInventories('ApplicationProperties')
+    ?$expand=instances($expand=Microsoft.Graph.deviceInventorySimpleItem/properties)
+```
+
+Results are printed as JSON (one object per installed application) and can optionally be copied to the clipboard.
+
+---
+
+## Usage - PowerShell module
+
+You can use IPC functions directly from any PowerShell 7 session - no CLI required. The vault is automatically initialised on first use (passwordless by default).
+
+> **Token parameters accept `[securestring]`** to prevent accidental exposure in PowerShell transcripts, logging, or command history. Always use `Read-Host -AsSecureString` for interactive input - this is the only method that is safe from PowerShell Script Block Logging and transcript capture.
+
+```powershell
+Import-Module ./IPC/IPC.psm1
+
+# Store a refresh token for auto-refresh (from Session Storage)
+# This is the recommended auth method - it auto-refreshes for ~24 hours.
+Set-IPCRefreshToken -RefreshToken (Read-Host 'Paste refresh token' -AsSecureString) -Tenant 'contoso.onmicrosoft.com'
+
+# Or store an access token (retrieved from browser DevTools Network tab)
+# Shorter-lived (~1 hour) and does not auto-refresh.
+Set-IPCAccessToken -AccessToken (Read-Host 'Paste access token' -AsSecureString)
+
+# Clear all tokens (e.g. when switching tenants)
+Clear-IPCTokens
+
+# List available inventory categories for a device
+$categories = Get-IPCDeviceInventoryCategories -DeviceId 'your-device-guid'
+$categories | ForEach-Object { $_.id }
+
+# Get hardware inventory for a specific category
+$battery = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'battery'
+$battery | ConvertTo-Json -Depth 10
+
+# Get software (application) inventory
+$apps = Get-IPCSoftwareInventory -DeviceId 'your-device-guid'
+$apps | ForEach-Object { "$($_.'Display Name') v$($_.'Version')" }
+```
+
+> **Note:** `Set-IPCRefreshToken`, `Set-IPCAccessToken`, and all other exported functions call `Initialize-IPCSecretVault` internally. You do **not** need to call it yourself - vault registration, module installation, and store creation are all handled automatically on first use.
+
+---
+
+## Usage - AI agent (Invoke-IPC)
+
+### How it works
+
+The agent **never handles tokens**. Authentication is always done by the user interactively - either via the CLI (`./cli/Start-IPC.ps1`) or using `Read-Host -AsSecureString` in a PowerShell session. Tokens are stored in a passwordless SecretStore vault that the agent reads automatically.
+
+```powershell
+# The agent only needs to import and query - no authentication code
+Import-Module ./IPC/IPC.psm1
+Invoke-IPC -Action ListDevices
+```
+
+### Prerequisites
+
+1. **Passwordless vault** - run `./cli/Start-IPC.ps1` and choose **No** at the vault setup prompt. The agent spawns a new process per call, so password-protected vaults will always fail.
+2. **User authenticates first** - use the CLI (option 1a or 1b) or the module interactively:
+   ```powershell
+   Import-Module ./IPC/IPC.psm1
+   # Refresh token (recommended - auto-refreshes and rotates, stays alive with regular use)
+   Set-IPCRefreshToken -RefreshToken (Read-Host 'Paste refresh token' -AsSecureString) -Tenant 'contoso.onmicrosoft.com'
+   # Or access token (expires in ~1h, no auto-refresh)
+   Set-IPCAccessToken -AccessToken (Read-Host 'Paste access token' -AsSecureString)
+   ```
+3. **Agent queries** - the agent calls `Invoke-IPC` and the vault provides the stored token transparently.
+
+### How authentication works for agents
+
+| Scenario | What happens | What the user needs to do |
+|----------|-------------|-------------------|
+| **First time** | No token stored | Authenticate interactively via CLI or module |
+| **Vault is password-protected** | Agent calls will fail - vault unlock state is process-scoped | Switch to passwordless: reset the vault (see [Resetting the vault](#resetting-the-vault)) |
+| **Within 1 hour** | Access token is valid | Nothing - calls work automatically |
+| **After 1 hour (with refresh token)** | Access token expired | Nothing - auto-refreshes silently via BroCI and rotates the refresh token |
+| **24+ hours of inactivity (with refresh token)** | Refresh token expired (was never rotated) | Re-authenticate interactively: run the CLI and paste a fresh refresh token |
+| **After 1 hour (access token only)** | Access token expired, no refresh | Re-authenticate interactively: run the CLI and paste a new access token |
+| **Switching tenants** | Tokens from wrong tenant | Run `Clear-IPCTokens` then re-authenticate via CLI |
+
+### Re-authenticating when tokens expire
+
+If the agent reports a token error, the **user** must re-authenticate interactively:
+
+```powershell
+# Option A - use the CLI (recommended)
+./cli/Start-IPC.ps1
+# Choose option 1b (refresh token) or 1a (access token)
+
+# Option B - use the module directly
+Import-Module ./IPC/IPC.psm1
+Set-IPCRefreshToken -RefreshToken (Read-Host 'Paste refresh token' -AsSecureString) -Tenant 'contoso.onmicrosoft.com'
+```
+
+### Checking token status programmatically
+
+```powershell
+$info = Get-IPCTokenInfo
+if (-not $info) {
+    Write-Host "No token - need to authenticate"
+} elseif ($info.Expired -and -not $info.HasRefresh) {
+    Write-Host "Token expired - need a fresh access token"
+} elseif ($info.Expired -and $info.HasRefresh) {
+    Write-Host "Token expired - will auto-refresh on next call"
+} else {
+    Write-Host "Token valid for $($info.ExpiresIn)"
+}
+```
+
+### Example queries
+
+```powershell
+# "Show me all MSI software on computer1"
+Invoke-IPC -Action SoftwareInventory -DeviceName 'computer1' -Filter 'msi'
+
+# "Check BIOS info for all devices"
+Invoke-IPC -Action HardwareInventory -AllDevices -Category 'bios'
+
+# "Full software inventory of computer2"
+Invoke-IPC -Action SoftwareInventory -DeviceName 'computer2'
+
+# "List all devices matching LAPTOP"
+Invoke-IPC -Action ListDevices -DeviceName 'LAPTOP'
+
+# "What inventory categories are available?"
+Invoke-IPC -Action ListCategories -DeviceName 'computer1'
+
+# "Show processor and memory for all devices"
+Invoke-IPC -Action HardwareInventory -AllDevices -Category 'processor','memory'
+
+# "Find Chrome across all devices"
+Invoke-IPC -Action SoftwareInventory -AllDevices -Filter 'Chrome'
+```
+
+See [SKILL.md](SKILL.md) for the full AI agent manifest with parameter reference, category list, and natural language → function call mappings.
+
+---
+
+## Running tests
+
+Requires [Pester](https://pester.dev) (v5+):
+
+```powershell
+Install-Module Pester -Scope CurrentUser -Force
+Invoke-Pester ./tests/IPC.Tests.ps1 -Output Detailed
+```
+
+---
+
+## Permissions
+
+IPC uses Microsoft Intune's own public client ID (`5926fc8e-304e-4f59-8bed-58ca97cc39a4`). No custom Azure app registration is needed.
+
+The refresh token flow uses the Azure Portal application (`c44b4083-3bb0-49c1-b47d-974e53cbdf3c`) as a broker via the BroCI (Nested App Authentication) exchange.
+
+The signed-in user must have at least the **Microsoft Intune Read Only Operator** (or equivalent) role in Entra ID to query device inventory data.
+
+### Recommended: use a dedicated read-only account
+
+IPC only ever reads data - it never writes to Intune or modifies any device. We strongly recommend authenticating as a **dedicated service or user account scoped to the minimum required role**, rather than using your day-to-day admin account. This limits the blast radius if a stored token is ever compromised.
+
+| Role | Access granted | Recommended? |
+|------|---------------|--------------|
+| `Microsoft Intune Read Only Operator` | Read device inventory, managed devices | ✅ Minimum required |
+| `Global Reader` | Read-only across all Microsoft 365 services | ⚠ Works, but broader than needed |
+| `Intune Administrator` / `Global Administrator` | Full read/write Intune and beyond | ❌ Unnecessary - avoid |
+
+**What a compromised read-only token can expose:** device names, hardware specs, installed software, OS versions, and compliance state. It cannot be used to enrol/unenrol devices, push policies, wipe devices, or access user data outside of Intune inventory.
+
+If your organisation supports it, use a **dedicated break-glass or service account** (e.g. `svc-ipc-readonly@contoso.onmicrosoft.com`) assigned only the `Microsoft Intune Read Only Operator` role. This way the account has no mailbox, no licences, and no access to anything outside Intune inventory - the token is as low-risk as it can be.
+
+---
+
+## License
+
+MIT

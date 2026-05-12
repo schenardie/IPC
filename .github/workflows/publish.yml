@@ -1,0 +1,20 @@
+name: Publish to PowerShell Gallery
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish Module
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Publish-Module -Path ./IPC -NuGetApiKey ${{ secrets.PSGALLERY_API_KEY }} -Verbose
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
