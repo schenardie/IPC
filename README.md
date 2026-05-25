@@ -31,7 +31,8 @@ No Azure app registration is required. IPC uses Microsoft Intune's own well-know
 
 ## Requirements
 
-- **PowerShell 7.0** or later (cross-platform: Windows & macOS)
+- **Windows PowerShell 5.1 or PowerShell 7+** on Windows
+- **PowerShell 7+** on macOS/Linux
 - An Intune-managed tenant with at least **Intune Read Only** permissions
 - The following PowerShell modules (auto-installed on first run):
   - `Microsoft.PowerShell.SecretManagement`
@@ -245,7 +246,7 @@ Option **2** lets you:
 
 1. Search for a Windows device by partial name (or paste a device GUID directly).
 2. Choose one device or all matching devices.
-3. Pick from the inventory categories available for that device (e.g. `battery`, `diskDrive`, `processor`, `operatingSystem`).
+3. Pick from the inventory categories available for that device (e.g. `battery`, `diskDrive`, `processor`, `operatingSystem`, `LocalAiAgent`).
 4. Select individual categories or `all`.
 
 Results are printed as JSON and can optionally be copied to the clipboard.
@@ -290,6 +291,10 @@ $categories | ForEach-Object { $_.id }
 # Get hardware inventory for a specific category
 $battery = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'battery'
 $battery | ConvertTo-Json -Depth 10
+
+# Local AI agent inventory (alias forms like 'local ai agents' also work)
+$localAi = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'LocalAiAgent'
+$localAi | ConvertTo-Json -Depth 10
 
 # Get software (application) inventory
 $apps = Get-IPCSoftwareInventory -DeviceId 'your-device-guid'
@@ -386,6 +391,9 @@ Invoke-IPC -Action ListCategories -DeviceName 'computer1'
 
 # "Show processor and memory for all devices"
 Invoke-IPC -Action HardwareInventory -AllDevices -Category 'processor','memory'
+
+# "Show Local AI agent inventory for computer1"
+Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'LocalAiAgent'
 
 # "Find Chrome across all devices"
 Invoke-IPC -Action SoftwareInventory -AllDevices -Filter 'Chrome'

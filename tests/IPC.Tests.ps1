@@ -154,4 +154,34 @@ Describe 'Invoke-IPC' {
             $validValues.ValidValues | Should -Contain $action
         }
     }
+
+    It 'normalizes Local AI agent category aliases for hardware inventory' {
+        Mock Get-IPCManagedDevices -ModuleName IPC {
+            @([pscustomobject]@{
+                id              = 'device-1'
+                deviceName      = 'computer1'
+                operatingSystem = 'Windows'
+                complianceState = 'compliant'
+            })
+        }
+        Mock Get-IPCDeviceInventoryCategories -ModuleName IPC {
+            @([pscustomobject]@{ id = 'LocalAiAgent' })
+        }
+        Mock Get-IPCInventoryBatch -ModuleName IPC {
+            param([string[]]$DeviceIds, [string[]]$Categories)
+            $script:CapturedCategories = $Categories
+            @{
+                'device-1' = @{
+                    'LocalAiAgent' = @(
+                        @{ 'Instance Name' = 'agent1'; 'Status' = 'Installed' }
+                    )
+                }
+            }
+        }
+
+        $result = Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'local ai agents'
+
+        $script:CapturedCategories | Should -Contain 'LocalAiAgent'
+        $result.Categories | Should -Contain 'LocalAiAgent'
+    }
 }

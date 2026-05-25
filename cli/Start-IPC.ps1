@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-#Requires -Version 7.0
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     IPC - Interactive CLI for Intune device inventory.
@@ -33,12 +33,42 @@ function Read-MaskedInput {
     return (Read-Host -Prompt $Prompt -AsSecureString)
 }
 
+function Test-IPCIsWindowsHost {
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
+function Get-CLIValue {
+    param(
+        [Parameter(Mandatory)]$InputObject,
+        [Parameter(Mandatory)][string[]]$Names,
+        $Default = $null
+    )
+
+    if ($null -eq $InputObject) { return $Default }
+
+    foreach ($name in $Names) {
+        if ($InputObject -is [System.Collections.IDictionary]) {
+            if ($InputObject.Contains($name) -and $null -ne $InputObject[$name]) {
+                return $InputObject[$name]
+            }
+            continue
+        }
+
+        $property = $InputObject.PSObject.Properties[$name]
+        if ($property -and $null -ne $property.Value) {
+            return $property.Value
+        }
+    }
+
+    return $Default
+}
+
 function Copy-ToClipboard {
     param([string]$Text)
     try {
-        if ($IsWindows) {
+        if (Test-IPCIsWindowsHost) {
             $Text | Set-Clipboard
-        } elseif ($IsMacOS) {
+        } elseif ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::MacOSX) {
             $Text | & pbcopy
         } else {
             $Text | & xclip -selection clipboard
@@ -93,9 +123,9 @@ function Select-Devices {
     Write-Host "`nFound $($matches_.Count) device(s):"
     for ($i = 0; $i -lt $matches_.Count; $i++) {
         $d = $matches_[$i]
-        $dn = $d.deviceName ?? '?'
-        $os = $d.operatingSystem ?? ''
-        $cs = $d.complianceState ?? ''
+        $dn = Get-CLIValue -InputObject $d -Names @('deviceName') -Default '?'
+        $os = Get-CLIValue -InputObject $d -Names @('operatingSystem') -Default ''
+        $cs = Get-CLIValue -InputObject $d -Names @('complianceState') -Default ''
         Write-Host ("  {0,3}.  {1,-30}  {2,-10}  {3}" -f ($i + 1), $dn, $os, $cs)
     }
     Write-Host "  all.  All $($matches_.Count) devices"
@@ -114,6 +144,37 @@ function Select-Devices {
         Write-Host '[warn] Invalid selection.' -ForegroundColor Yellow
         return @()
     }
+}
+
+function Resolve-MenuInventoryCategory {
+    param(
+        [Parameter(Mandatory)][string]$Category,
+        [string[]]$AvailableCategories
+    )
+
+    $trimmed = $Category.Trim()
+    if (-not $trimmed) { return $null }
+    if ($trimmed -ieq 'all') { return 'all' }
+
+    foreach ($available in $AvailableCategories) {
+        if ($available -and $available -ieq $trimmed) { return $available }
+    }
+
+    $normalized = [regex]::Replace($trimmed.ToLowerInvariant(), '[^a-z0-9]', '')
+    if ($normalized -in @('localaiagent', 'localaiagents')) {
+        foreach ($available in $AvailableCategories) {
+            if ($available -and $available -ieq 'LocalAiAgent') { return $available }
+        }
+        return 'LocalAiAgent'
+    }
+
+    foreach ($available in $AvailableCategories) {
+        if (-not $available) { continue }
+        $availableNormalized = [regex]::Replace($available.ToLowerInvariant(), '[^a-z0-9]', '')
+        if ($availableNormalized -eq $normalized) { return $available }
+    }
+
+    return $null
 }
 
 # ── Menu ─────────────────────────────────────────────────────────────────────
@@ -203,7 +264,7 @@ while ($true) {
                 $devices = Select-Devices
                 if ($devices.Count -eq 0) { continue }
 
-                $firstId = $devices[0].id ?? $devices[0].deviceId ?? ''
+                $firstId = Get-CLIValue -InputObject $devices[0] -Names @('id', 'deviceId') -Default ''
                 Write-Host '[info] Loading inventory categories...' -ForegroundColor Cyan
                 $categories = Get-IPCDeviceInventoryCategories -DeviceId $firstId
                 if ($categories.Count -eq 0) {
@@ -211,7 +272,7 @@ while ($true) {
                     continue
                 }
 
-                $catNames = @($categories | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
+                $catNames = @($categories | ForEach-Object { Get-CLIValue -InputObject $_ -Names @('id', 'inventoryId') -Default '' } | Where-Object { $_ })
 
                 Write-Host "`nAvailable categories ($($catNames.Count)):"
                 for ($i = 0; $i -lt $catNames.Count; $i++) {
@@ -232,10 +293,12 @@ while ($true) {
                                 $selectedCats += $catNames[$idx]
                             }
                         } catch {
-                            if ($part -in $catNames) { $selectedCats += $part }
+                            $resolvedCat = Resolve-MenuInventoryCategory -Category $part -AvailableCategories $catNames
+                            if ($resolvedCat) { $selectedCats += $resolvedCat }
                         }
                     }
                 }
+                $selectedCats = @($selectedCats | Select-Object -Unique)
                 if ($selectedCats.Count -eq 0) {
                     Write-Host '[warn] No valid categories selected.' -ForegroundColor Yellow
                     continue
@@ -243,8 +306,8 @@ while ($true) {
 
                 $deviceIdToName = @{}
                 foreach ($d in $devices) {
-                    $did = $d.id ?? $d.deviceId ?? ''
-                    $deviceIdToName[$did] = $d.deviceName ?? $did
+                    $did = Get-CLIValue -InputObject $d -Names @('id', 'deviceId') -Default ''
+                    $deviceIdToName[$did] = Get-CLIValue -InputObject $d -Names @('deviceName') -Default $did
                 }
                 $deviceIds = @($deviceIdToName.Keys)
                 $totalReqs = $deviceIds.Count * $selectedCats.Count
@@ -266,13 +329,13 @@ while ($true) {
 
                 $grouped = @{}
                 foreach ($deviceId in $batchResult.Keys) {
-                    $deviceName = $deviceIdToName[$deviceId] ?? $deviceId
+                    $deviceName = Get-CLIValue -InputObject $deviceIdToName -Names @($deviceId) -Default $deviceId
                     $grouped[$deviceName] = $batchResult[$deviceId]
                 }
 
                 foreach ($deviceId in $deviceIds) {
                     $deviceName = $deviceIdToName[$deviceId]
-                    $deviceCats = $batchResult[$deviceId] ?? @{}
+                    $deviceCats = if ($batchResult.ContainsKey($deviceId) -and $null -ne $batchResult[$deviceId]) { $batchResult[$deviceId] } else { @{} }
                     foreach ($cat in $selectedCats) {
                         if (-not $deviceCats.ContainsKey($cat)) {
                             Write-Host "[warn] $deviceName/$cat : not available (skipped)" -ForegroundColor Yellow
@@ -280,7 +343,8 @@ while ($true) {
                     }
                 }
 
-                $output = if ($grouped.Count -gt 1) { $grouped } else { ($grouped.Values | Select-Object -First 1) ?? @{} }
+                $singleGrouped = $grouped.Values | Select-Object -First 1
+                $output = if ($grouped.Count -gt 1) { $grouped } elseif ($null -ne $singleGrouped) { $singleGrouped } else { @{} }
                 $total = 0
                 if ($output -is [hashtable]) {
                     foreach ($v in $output.Values) { if ($v -is [array]) { $total += $v.Count } }
@@ -304,8 +368,8 @@ while ($true) {
 
                 $deviceIdToName = @{}
                 foreach ($d in $devices) {
-                    $did = $d.id ?? $d.deviceId ?? ''
-                    $deviceIdToName[$did] = $d.deviceName ?? $did
+                    $did = Get-CLIValue -InputObject $d -Names @('id', 'deviceId') -Default ''
+                    $deviceIdToName[$did] = Get-CLIValue -InputObject $d -Names @('deviceName') -Default $did
                 }
                 $deviceIds = @($deviceIdToName.Keys)
                 $totalChunks = [math]::Ceiling($deviceIds.Count / 20)
@@ -326,7 +390,7 @@ while ($true) {
 
                 $allApps = @{}
                 foreach ($deviceId in $batchResult.Keys) {
-                    $deviceName = $deviceIdToName[$deviceId] ?? $deviceId
+                    $deviceName = Get-CLIValue -InputObject $deviceIdToName -Names @($deviceId) -Default $deviceId
                     $allApps[$deviceName] = $batchResult[$deviceId]
                 }
 
@@ -337,7 +401,8 @@ while ($true) {
                     }
                 }
 
-                $output = if ($allApps.Count -gt 1) { $allApps } else { ($allApps.Values | Select-Object -First 1) ?? @() }
+                $singleApps = $allApps.Values | Select-Object -First 1
+                $output = if ($allApps.Count -gt 1) { $allApps } elseif ($null -ne $singleApps) { $singleApps } else { @() }
                 $total = if ($output -is [array]) { $output.Count } else {
                     $s = 0; foreach ($v in $output.Values) { if ($v -is [array]) { $s += $v.Count } }; $s
                 }
