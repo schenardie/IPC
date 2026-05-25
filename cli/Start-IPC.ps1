@@ -15,7 +15,7 @@
 $ErrorActionPreference = 'Stop'
 
 # Use local module if running from the repo, otherwise install from PSGallery
-$localModule = Join-Path $PSScriptRoot '..' 'IPC' 'IPC.psm1'
+$localModule = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'IPC') 'IPC.psm1'
 if (Test-Path $localModule) {
     Import-Module $localModule -Force
 } else {
@@ -181,26 +181,26 @@ function Resolve-MenuInventoryCategory {
 
 $menu = @"
 
-╔══════════════════════════════════════════════════╗
-║           IPC - Device Inventory                 ║
-╠══════════════════════════════════════════════════╣
-║  1a  Store access token  (from Network tab)      ║
-║  1b  Store refresh token (from Session Storage)  ║
-║  1c  Clear all tokens                            ║
-║  2   Get device inventory                        ║
-║  3   Get software inventory                      ║
-║  q   Quit                                        ║
-╚══════════════════════════════════════════════════╝
++--------------------------------------------------+
+|           IPC - Device Inventory                 |
++--------------------------------------------------+
+|  1a  Store access token  (from Network tab)      |
+|  1b  Store refresh token (from Session Storage)  |
+|  1c  Clear all tokens                            |
+|  2   Get device inventory                        |
+|  3   Get software inventory                      |
+|  q   Quit                                        |
++--------------------------------------------------+
 "@
 
 function Show-TokenStatus {
     $info = Get-IPCTokenInfo
     if (-not $info) {
-        Write-Host '  ⚠  No token stored - use option 1a or 1b to authenticate.' -ForegroundColor Yellow
+        Write-Host '  [!]  No token stored - use option 1a or 1b to authenticate.' -ForegroundColor Yellow
         Write-Host
         return
     }
-    $status = if ($info.Expired) { '⚠  EXPIRED' } else { '✔  Valid' }
+    $status = if ($info.Expired) { '[!] EXPIRED' } else { 'Valid' }
     $tokenType = if ($info.HasRefresh) { 'Refresh (auto-refresh enabled)' } else { 'Access (manual)' }
     Write-Host "  Status  : $status"
     Write-Host "  Type    : $tokenType"
