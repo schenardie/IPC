@@ -18,7 +18,7 @@ IPC queries hardware and software inventory from Microsoft Intune managed device
 
 ## Setup
 
-> **IMPORTANT - PowerShell 7 required.** This module uses `#Requires -Version 7.0`. The default `powershell` tool often launches Windows PowerShell 5.1, which will fail. **Always run commands through `pwsh`:**
+> **PowerShell compatibility:** IPC supports **Windows PowerShell 5.1** and **PowerShell 7+** on Windows. On macOS/Linux, use **PowerShell 7+ (`pwsh`)**.
 >
 > ```
 > pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module -Name IPC -Scope CurrentUser -Force }; Import-Module IPC; <your commands here>"
@@ -27,14 +27,16 @@ IPC queries hardware and software inventory from Microsoft Intune managed device
 > If `pwsh` returns "Access is denied", try the full path: `& 'C:\Users\<user>\AppData\Local\Microsoft\WindowsApps\pwsh.exe' -Command "..."` or locate it with `Get-Command pwsh.exe`.
 
 ```powershell
-# All commands must run inside pwsh (PowerShell 7)
-# The module is auto-installed from PSGallery if not already present
+# Windows PowerShell 5.1
+powershell -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module -Name IPC -Scope CurrentUser -Force }; Import-Module IPC; Invoke-IPC -Action ListDevices"
+
+# PowerShell 7+
 pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module -Name IPC -Scope CurrentUser -Force }; Import-Module IPC; Invoke-IPC -Action ListDevices"
 ```
 
 > **Authentication is handled by the user, not the agent.** The user stores tokens interactively before invoking the agent. The agent only calls query functions (`Invoke-IPC`, `Get-IPCTokenInfo`) - it must **never** ask for, accept, or handle tokens directly.
 
-> **If the agent gets a "No token" or "expired" error**, instruct the user to authenticate by running these commands in a PowerShell 7 terminal:
+> **If the agent gets a "No token" or "expired" error**, instruct the user to authenticate by running these commands in a PowerShell terminal:
 > ```powershell
 > Import-Module IPC
 > # Option 1 (recommended) - refresh token from browser Session Storage (auto-refreshes for ~24h)
@@ -54,7 +56,7 @@ pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module 
 | DeviceName  | string   | No*      | Partial device name to search (e.g. `'LAPTOP'`, `'computer1'`) |
 | DeviceId    | string   | No*      | Exact Intune device GUID |
 | AllDevices  | switch   | No*      | Target all Windows managed devices |
-| Category    | string[] | No       | Hardware inventory categories (e.g. `'bios'`, `'battery'`). Use `'all'` for everything. Only for `HardwareInventory`. |
+| Category    | string[] | No       | Hardware inventory categories (e.g. `'bios'`, `'battery'`, `'LocalAiAgent'`). Use `'all'` for everything. Only for `HardwareInventory`. Alias forms like `'local ai agents'` are also accepted. |
 | Filter      | string   | No       | Text filter applied to results (case-insensitive match on any property value) |
 | Top         | int      | No       | Max devices to return (default 100) |
 
@@ -98,12 +100,13 @@ For multi-device results, `Results` is keyed by device name.
 | `processor`        | CPU details |
 | `systemEnclosure`  | Chassis type, serial number |
 | `windowsQfe`       | Installed Windows updates |
+| `LocalAiAgent`     | Local AI agent inventory instances |
 
 > **Note:** Available categories vary by device. Use `ListCategories` to discover what's available for a specific device.
 
 ## Example Queries → Function Calls
 
-> **Remember:** All commands must be wrapped in `pwsh -Command "Import-Module ./IPC/IPC.psm1; ..."`
+> **Remember:** On Windows you can use `powershell -Command` or `pwsh -Command`. On macOS/Linux, use `pwsh -Command`.
 
 | Natural Language Query | PowerShell Call (inside pwsh -Command) |
 |----------------------|-----------------|
@@ -114,6 +117,7 @@ For multi-device results, `Results` is keyed by device name.
 | "List devices matching LAPTOP" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action ListDevices -DeviceName 'LAPTOP'` |
 | "Battery health for device abc-123" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceId 'abc-123' -Category 'battery'` |
 | "Show processor and memory for all devices" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -AllDevices -Category 'processor','memory'` |
+| "Show Local AI agent inventory for computer1" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'LocalAiAgent'` |
 | "What inventory categories exist for computer1?" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action ListCategories -DeviceName 'computer1'` |
 | "Find Chrome in software inventory across all devices" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action SoftwareInventory -AllDevices -Filter 'Chrome'` |
 | "Show all hardware info for computer1" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'all'` |

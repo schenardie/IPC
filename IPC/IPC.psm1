@@ -1,4 +1,4 @@
-#Requires -Version 7.0
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     IPC - Intune Properties Catalog (PowerShell module).
@@ -22,6 +22,113 @@ $script:SECRET_TENANT    = 'ipc-tenant-id'
 $script:BATCH_SIZE       = 20
 $script:MAX_BATCH_RETRIES = 5
 $script:DEFAULT_RETRY_AFTER = 30
+$script:IPC_NOT_FOUND = New-Object psobject
+$script:INVENTORY_CATEGORY_ALIASES = @{
+    'localaiagent'  = 'LocalAiAgent'
+    'localaiagents' = 'LocalAiAgent'
+}
+
+function Test-IPCIsWindows {
+    return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
+function ConvertTo-IPCHashtable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        $InputObject
+    )
+
+    process {
+        if ($null -eq $InputObject) { return $null }
+
+        if ($InputObject -is [System.Collections.IDictionary]) {
+            $result = @{}
+            foreach ($key in $InputObject.Keys) {
+                $result[$key] = ConvertTo-IPCHashtable -InputObject $InputObject[$key]
+            }
+            return $result
+        }
+
+        if (($InputObject -is [System.Collections.IEnumerable]) -and -not ($InputObject -is [string])) {
+            $items = @()
+            foreach ($item in $InputObject) {
+                $items += ,(ConvertTo-IPCHashtable -InputObject $item)
+            }
+            return $items
+        }
+
+        if ($InputObject -is [pscustomobject]) {
+            $result = @{}
+            foreach ($property in $InputObject.PSObject.Properties) {
+                $result[$property.Name] = ConvertTo-IPCHashtable -InputObject $property.Value
+            }
+            return $result
+        }
+
+        return $InputObject
+    }
+}
+
+function ConvertFrom-IPCJson {
+    [CmdletBinding()]
+    [OutputType([hashtable])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Json
+    )
+
+    $parsed = $Json | ConvertFrom-Json
+    return ConvertTo-IPCHashtable -InputObject $parsed
+}
+
+function Get-IPCMemberValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        $InputObject,
+
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        if ($InputObject.Contains($Name)) {
+            return $InputObject[$Name]
+        }
+        return $script:IPC_NOT_FOUND
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($property) {
+        return $property.Value
+    }
+
+    return $script:IPC_NOT_FOUND
+}
+
+function Get-IPCFirstValue {
+    [CmdletBinding()]
+    param(
+        $InputObject,
+
+        [Parameter(Mandatory)]
+        [string[]]$Names,
+
+        $Default = $null
+    )
+
+    if ($null -eq $InputObject) { return $Default }
+
+    foreach ($name in $Names) {
+        $value = Get-IPCMemberValue -InputObject $InputObject -Name $name
+        if (-not [object]::ReferenceEquals($value, $script:IPC_NOT_FOUND) -and $null -ne $value) {
+            return $value
+        }
+    }
+
+    return $Default
+}
 
 # ── Secret Vault ─────────────────────────────────────────────────────────────
 
@@ -48,11 +155,16 @@ function Initialize-IPCSecretVault {
         $script:_vaultInitialized = $false
     }
 
-    $storePath = if ($IsWindows) {
-        Join-Path ([System.Environment]::GetFolderPath('LocalApplicationData')) `
-            'Microsoft' 'PowerShell' 'secretmanagement' 'localstore'
+    $storePath = if (Test-IPCIsWindows) {
+        Join-Path `
+            (Join-Path `
+                (Join-Path `
+                    (Join-Path ([System.Environment]::GetFolderPath('LocalApplicationData')) 'Microsoft') `
+                    'PowerShell') `
+                'secretmanagement') `
+            'localstore'
     } else {
-        Join-Path $HOME '.secretmanagement' 'localstore'
+        Join-Path (Join-Path $HOME '.secretmanagement') 'localstore'
     }
     $storeExists = Test-Path $storePath
 
@@ -211,7 +323,7 @@ function ConvertFrom-JwtPayload {
         }
         $payload = $payload.Replace('-', '+').Replace('_', '/')
         $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload))
-        return ($json | ConvertFrom-Json -AsHashtable)
+        return (ConvertFrom-IPCJson -Json $json)
     } catch {
         return @{}
     }
@@ -266,6 +378,61 @@ function ConvertTo-FriendlyName {
     return (Get-Culture).TextInfo.ToTitleCase($spaced)
 }
 
+function Normalize-IPCInventoryCategory {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Category
+    )
+
+    return ([regex]::Replace($Category.Trim().ToLowerInvariant(), '[^a-z0-9]', ''))
+}
+
+function Resolve-IPCInventoryCategory {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [string]$Category,
+
+        [string[]]$AvailableCategories
+    )
+
+    $trimmed = $Category.Trim()
+    if (-not $trimmed) { return $trimmed }
+
+    if ($trimmed -ieq 'all') { return 'all' }
+
+    $normalized = Normalize-IPCInventoryCategory -Category $trimmed
+
+    if ($AvailableCategories) {
+        foreach ($available in $AvailableCategories) {
+            if ($available -and $available -ieq $trimmed) { return $available }
+        }
+    }
+
+    if ($script:INVENTORY_CATEGORY_ALIASES.ContainsKey($normalized)) {
+        $aliasTarget = $script:INVENTORY_CATEGORY_ALIASES[$normalized]
+        if ($AvailableCategories) {
+            foreach ($available in $AvailableCategories) {
+                if ($available -and $available -ieq $aliasTarget) { return $available }
+            }
+        }
+        return $aliasTarget
+    }
+
+    if ($AvailableCategories) {
+        foreach ($available in $AvailableCategories) {
+            if ($available -and (Normalize-IPCInventoryCategory -Category $available) -eq $normalized) {
+                return $available
+            }
+        }
+    }
+
+    return $trimmed
+}
+
 function ConvertTo-CleanInstance {
     <#
     .SYNOPSIS
@@ -295,7 +462,7 @@ function ConvertTo-CleanInstance {
                     $prop = $propHt
                 }
 
-                $propName = $prop['displayName'] ?? $prop['name'] ?? $prop['propertyName'] ?? $prop['id']
+                $propName = Get-IPCFirstValue -InputObject $prop -Names @('displayName', 'name', 'propertyName', 'id')
                 $propValue = if ($prop.ContainsKey('value')) { $prop['value'] } else { $prop['propertyValue'] }
 
                 if ($propName -and -not $cleaned.Contains((ConvertTo-FriendlyName $propName))) {
@@ -465,8 +632,8 @@ function Update-IPCAccessTokenFromRefresh {
 
     $accessToken = $response.access_token
     if (-not $accessToken) {
-        $err = $response.error ?? 'unknown_error'
-        $desc = $response.error_description ?? ''
+        $err = Get-IPCFirstValue -InputObject $response -Names @('error') -Default 'unknown_error'
+        $desc = Get-IPCFirstValue -InputObject $response -Names @('error_description') -Default ''
         throw "BroCI token exchange failed: $err - $desc"
     }
 
@@ -475,7 +642,7 @@ function Update-IPCAccessTokenFromRefresh {
     $expiresAt = if ($payload.ContainsKey('exp')) {
         [double]$payload['exp']
     } else {
-        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + ($response.expires_in ?? 3600)
+        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + (Get-IPCFirstValue -InputObject $response -Names @('expires_in') -Default 3600)
     }
 
     $metadata = @{ expires_at = $expiresAt } | ConvertTo-Json -Compress
@@ -522,8 +689,8 @@ function Get-IPCValidToken {
 
     $expiresAt = 0
     if ($metadataJson) {
-        $metadata = $metadataJson | ConvertFrom-Json -AsHashtable
-        $expiresAt = [double]($metadata['expires_at'] ?? 0)
+        $metadata = ConvertFrom-IPCJson -Json $metadataJson
+        $expiresAt = [double](Get-IPCFirstValue -InputObject $metadata -Names @('expires_at') -Default 0)
     }
 
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -569,8 +736,8 @@ function Get-IPCTokenInfo {
 
     $expiresAt = 0
     if ($metadataJson) {
-        $meta = $metadataJson | ConvertFrom-Json -AsHashtable
-        $expiresAt = [double]($meta['expires_at'] ?? $payload['exp'] ?? 0)
+        $meta = ConvertFrom-IPCJson -Json $metadataJson
+        $expiresAt = [double](Get-IPCFirstValue -InputObject $meta -Names @('expires_at') -Default (Get-IPCFirstValue -InputObject $payload -Names @('exp') -Default 0))
     } elseif ($payload.ContainsKey('exp')) {
         $expiresAt = [double]$payload['exp']
     }
@@ -585,8 +752,8 @@ function Get-IPCTokenInfo {
     } catch { }
 
     return @{
-        User         = $payload['upn'] ?? $payload['unique_name'] ?? $payload['preferred_username'] ?? 'unknown'
-        Tenant       = $payload['tid'] ?? 'unknown'
+        User         = Get-IPCFirstValue -InputObject $payload -Names @('upn', 'unique_name', 'preferred_username') -Default 'unknown'
+        Tenant       = Get-IPCFirstValue -InputObject $payload -Names @('tid') -Default 'unknown'
         ExpiresAt    = $expiryUtc
         ExpiresIn    = if ($secondsLeft -gt 0) { "{0}h {1}m" -f [math]::Floor($secondsLeft / 3600), [math]::Floor(($secondsLeft % 3600) / 60) } else { 'EXPIRED' }
         Expired      = $secondsLeft -le 0
@@ -650,9 +817,10 @@ function Invoke-GraphRequest {
         $msg = $errorBody
         $code = ''
         try {
-            $parsed = $errorBody | ConvertFrom-Json
-            $msg = $parsed.error.message ?? $errorBody
-            $code = $parsed.error.code ?? ''
+            $parsed = ConvertFrom-IPCJson -Json $errorBody
+            $parsedError = Get-IPCFirstValue -InputObject $parsed -Names @('error')
+            $msg = Get-IPCFirstValue -InputObject $parsedError -Names @('message') -Default $errorBody
+            $code = Get-IPCFirstValue -InputObject $parsedError -Names @('code') -Default ''
         } catch { }
         throw "Graph API error $statusCode [$code]: $msg"
     }
@@ -703,14 +871,14 @@ function Invoke-GraphBatch {
             $throttledIds = @()
             $maxRetryAfter = 0
 
-            foreach ($item in ($envelope.responses ?? @())) {
+            foreach ($item in @(Get-IPCFirstValue -InputObject $envelope -Names @('responses') -Default @())) {
                 $itemId = [string]$item.id
-                $status = $item.status ?? 200
-                $body = $item.body ?? @{}
-                $itemHeaders = $item.headers ?? @{}
+                $status = Get-IPCFirstValue -InputObject $item -Names @('status') -Default 200
+                $body = Get-IPCFirstValue -InputObject $item -Names @('body') -Default @{}
+                $itemHeaders = Get-IPCFirstValue -InputObject $item -Names @('headers') -Default @{}
 
                 if ($status -eq 429) {
-                    $retryAfter = [double]($itemHeaders.'Retry-After' ?? $itemHeaders.'retry-after' ?? $script:DEFAULT_RETRY_AFTER)
+                    $retryAfter = [double](Get-IPCFirstValue -InputObject $itemHeaders -Names @('Retry-After', 'retry-after') -Default $script:DEFAULT_RETRY_AFTER)
                     $retryAfter = [math]::Max(1.0, $retryAfter)
                     $maxRetryAfter = [math]::Max($maxRetryAfter, $retryAfter)
                     $throttledIds += $itemId
@@ -771,12 +939,12 @@ function Get-IPCManagedDevices {
 
     $results = @()
     $response = Invoke-GraphRequest -Path '/deviceManagement/managedDevices' -QueryParameters $params
-    $results += @($response.value ?? @())
+    $results += @(Get-IPCFirstValue -InputObject $response -Names @('value') -Default @())
 
     $nextLink = $response.'@odata.nextLink'
     while ($nextLink) {
         $response = Invoke-GraphRequest -Path $nextLink
-        $results += @($response.value ?? @())
+        $results += @(Get-IPCFirstValue -InputObject $response -Names @('value') -Default @())
         $nextLink = $response.'@odata.nextLink'
     }
 
@@ -810,7 +978,7 @@ function Get-IPCDeviceInventoryCategories {
 
     $response = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories"
     if ($null -eq $response) { return @() }
-    return @($response.value ?? @())
+    return @(Get-IPCFirstValue -InputObject $response -Names @('value') -Default @())
 }
 
 function Get-IPCDeviceInventory {
@@ -827,9 +995,10 @@ function Get-IPCDeviceInventory {
         [string]$Category
     )
 
-    $instances = Get-IPCInventoryInstances -DeviceId $DeviceId -Category $Category
+    $resolvedCategory = Resolve-IPCInventoryCategory -Category $Category
+    $instances = Get-IPCInventoryInstances -DeviceId $DeviceId -Category $resolvedCategory
     $hydrated = foreach ($inst in $instances) {
-        Resolve-SimpleInstance -DeviceId $DeviceId -Category $Category -Instance $inst
+        Resolve-SimpleInstance -DeviceId $DeviceId -Category $resolvedCategory -Instance $inst
     }
 
     return @(foreach ($inst in $hydrated) {
@@ -860,7 +1029,7 @@ function Get-IPCSoftwareInventory {
         -QueryParameters @{ '$expand' = $expandParam }
 
     if ($null -eq $response) { return @() }
-    $instances = @($response.instances ?? @())
+    $instances = @(Get-IPCFirstValue -InputObject $response -Names @('instances') -Default @())
 
     return @(foreach ($inst in $instances) {
         $ht = if ($inst -is [hashtable]) { $inst }
@@ -892,11 +1061,17 @@ function Get-IPCInventoryBatch {
 
     if ($DeviceIds.Count -eq 0 -or $Categories.Count -eq 0) { return @{} }
 
+    $resolvedCategories = @($Categories |
+        ForEach-Object { Resolve-IPCInventoryCategory -Category $_ } |
+        Where-Object { $_ -and $_ -ine 'all' } |
+        Select-Object -Unique)
+    if ($resolvedCategories.Count -eq 0) { return @{} }
+
     $expandParam = 'instances($expand=Microsoft.Graph.deviceInventorySimpleItem/properties)'
 
     $requests = @()
     foreach ($deviceId in $DeviceIds) {
-        foreach ($category in $Categories) {
+        foreach ($category in $resolvedCategories) {
             $requests += @{
                 id     = "$deviceId||$category"
                 method = 'GET'
@@ -925,7 +1100,7 @@ function Get-IPCInventoryBatch {
             continue
         }
 
-        $instances = @($body.instances ?? @())
+        $instances = @(Get-IPCFirstValue -InputObject $body -Names @('instances') -Default @())
         if (-not $raw.ContainsKey($deviceId)) { $raw[$deviceId] = @{} }
         $raw[$deviceId][$category] = $instances
 
@@ -1032,7 +1207,7 @@ function Get-IPCSoftwareInventoryBatch {
             continue
         }
 
-        $instances = @($body.instances ?? @())
+        $instances = @(Get-IPCFirstValue -InputObject $body -Names @('instances') -Default @())
         $output[$deviceId] = @(foreach ($inst in $instances) {
             $ht = if ($inst -is [hashtable]) { $inst }
                   elseif ($inst -is [System.Collections.IDictionary]) { [hashtable]$inst }
@@ -1057,8 +1232,10 @@ function Get-IPCInventoryInstances {
         [Parameter(Mandatory)][string]$Category
     )
 
+    $resolvedCategory = Resolve-IPCInventoryCategory -Category $Category
+
     try {
-        $response = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$Category')/instances"
+        $response = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$resolvedCategory')/instances"
         if ($null -ne $response -and $response.value -is [array]) {
             return @($response.value)
         }
@@ -1068,16 +1245,16 @@ function Get-IPCInventoryInstances {
 
     $expandFull = 'instances($expand=Microsoft.Graph.deviceInventorySimpleItem/properties)'
     try {
-        $fallback = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$Category')" `
+        $fallback = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$resolvedCategory')" `
             -QueryParameters @{ '$expand' = $expandFull }
     } catch {
         $expandSimple = 'instances'
-        $fallback = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$Category')" `
+        $fallback = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$resolvedCategory')" `
             -QueryParameters @{ '$expand' = $expandSimple }
     }
 
     if ($null -eq $fallback) { return @() }
-    return @($fallback.instances ?? @())
+    return @(Get-IPCFirstValue -InputObject $fallback -Names @('instances') -Default @())
 }
 
 function Resolve-SimpleInstance {
@@ -1087,6 +1264,8 @@ function Resolve-SimpleInstance {
         [Parameter(Mandatory)][string]$Category,
         [Parameter(Mandatory)]$Instance
     )
+
+    $resolvedCategory = Resolve-IPCInventoryCategory -Category $Category
 
     $ht = if ($Instance -is [hashtable]) { $Instance }
           elseif ($Instance -is [System.Collections.IDictionary]) { [hashtable]$Instance }
@@ -1104,7 +1283,7 @@ function Resolve-SimpleInstance {
 
     try {
         $encodedId = [System.Uri]::EscapeDataString($instanceId)
-        $detail = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$Category')/instances('$encodedId')"
+        $detail = Invoke-GraphRequest -Path "/deviceManagement/managedDevices('$DeviceId')/deviceInventories('$resolvedCategory')/instances('$encodedId')"
 
         if ($null -ne $detail) {
             $detailHt = if ($detail -is [hashtable]) { $detail }
@@ -1209,9 +1388,9 @@ function Invoke-IPC {
 
     # Validate parameter combinations
     $deviceSelectors = @(
-        ($DeviceName ? 1 : 0),
-        ($DeviceId   ? 1 : 0),
-        ($AllDevices ? 1 : 0)
+        $(if ($DeviceName) { 1 } else { 0 }),
+        $(if ($DeviceId) { 1 } else { 0 }),
+        $(if ($AllDevices) { 1 } else { 0 })
     )
     if (($deviceSelectors | Measure-Object -Sum).Sum -gt 1) {
         throw 'Specify only one of -DeviceName, -DeviceId, or -AllDevices.'
@@ -1250,10 +1429,10 @@ function Invoke-IPC {
         'ListDevices' {
             $result = @($devices | ForEach-Object {
                 @{
-                    DeviceId        = $_.id ?? $_.deviceId ?? ''
-                    DeviceName      = $_.deviceName ?? ''
-                    OperatingSystem = $_.operatingSystem ?? ''
-                    ComplianceState = $_.complianceState ?? ''
+                    DeviceId        = Get-IPCFirstValue -InputObject $_ -Names @('id', 'deviceId') -Default ''
+                    DeviceName      = Get-IPCFirstValue -InputObject $_ -Names @('deviceName') -Default ''
+                    OperatingSystem = Get-IPCFirstValue -InputObject $_ -Names @('operatingSystem') -Default ''
+                    ComplianceState = Get-IPCFirstValue -InputObject $_ -Names @('complianceState') -Default ''
                 }
             })
             if ($Filter) {
@@ -1272,13 +1451,13 @@ function Invoke-IPC {
             if ($devices.Count -eq 0) {
                 return @{ Action = 'ListCategories'; DeviceCount = 0; Categories = @() }
             }
-            $firstId = $devices[0].id ?? $devices[0].deviceId ?? ''
+            $firstId = Get-IPCFirstValue -InputObject $devices[0] -Names @('id', 'deviceId') -Default ''
             $cats = Get-IPCDeviceInventoryCategories -DeviceId $firstId
-            $catIds = @($cats | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
+            $catIds = @($cats | ForEach-Object { Get-IPCFirstValue -InputObject $_ -Names @('id', 'inventoryId') -Default '' } | Where-Object { $_ })
             return @{
                 Action      = 'ListCategories'
                 DeviceId    = $firstId
-                DeviceName  = $devices[0].deviceName ?? $firstId
+                DeviceName  = Get-IPCFirstValue -InputObject $devices[0] -Names @('deviceName') -Default $firstId
                 Categories  = $catIds
             }
         }
@@ -1290,8 +1469,8 @@ function Invoke-IPC {
 
             $deviceIdToName = @{}
             foreach ($d in $devices) {
-                $did = $d.id ?? $d.deviceId ?? ''
-                $deviceIdToName[$did] = $d.deviceName ?? $did
+                $did = Get-IPCFirstValue -InputObject $d -Names @('id', 'deviceId') -Default ''
+                $deviceIdToName[$did] = Get-IPCFirstValue -InputObject $d -Names @('deviceName') -Default $did
             }
             $deviceIds = @($deviceIdToName.Keys)
 
@@ -1299,9 +1478,18 @@ function Invoke-IPC {
             if (-not $Category -or $Category -contains 'all') {
                 $firstId = $deviceIds[0]
                 $available = Get-IPCDeviceInventoryCategories -DeviceId $firstId
-                $selectedCats = @($available | ForEach-Object { $_.id ?? $_.inventoryId ?? '' } | Where-Object { $_ })
+                $selectedCats = @($available | ForEach-Object { Get-IPCFirstValue -InputObject $_ -Names @('id', 'inventoryId') -Default '' } | Where-Object { $_ })
             } else {
-                $selectedCats = $Category
+                $availableCatIds = @()
+                if ($deviceIds.Count -gt 0) {
+                    $firstId = $deviceIds[0]
+                    $available = Get-IPCDeviceInventoryCategories -DeviceId $firstId
+                    $availableCatIds = @($available | ForEach-Object { Get-IPCFirstValue -InputObject $_ -Names @('id', 'inventoryId') -Default '' } | Where-Object { $_ })
+                }
+                $selectedCats = @($Category |
+                    ForEach-Object { Resolve-IPCInventoryCategory -Category $_ -AvailableCategories $availableCatIds } |
+                    Where-Object { $_ } |
+                    Select-Object -Unique)
             }
 
             if ($selectedCats.Count -eq 0) {
@@ -1312,7 +1500,7 @@ function Invoke-IPC {
 
             $output = @{}
             foreach ($deviceId in $batchResult.Keys) {
-                $name = $deviceIdToName[$deviceId] ?? $deviceId
+                $name = Get-IPCFirstValue -InputObject $deviceIdToName -Names @($deviceId) -Default $deviceId
                 $output[$name] = $batchResult[$deviceId]
             }
 
@@ -1352,8 +1540,8 @@ function Invoke-IPC {
 
             $deviceIdToName = @{}
             foreach ($d in $devices) {
-                $did = $d.id ?? $d.deviceId ?? ''
-                $deviceIdToName[$did] = $d.deviceName ?? $did
+                $did = Get-IPCFirstValue -InputObject $d -Names @('id', 'deviceId') -Default ''
+                $deviceIdToName[$did] = Get-IPCFirstValue -InputObject $d -Names @('deviceName') -Default $did
             }
             $deviceIds = @($deviceIdToName.Keys)
 
@@ -1361,7 +1549,7 @@ function Invoke-IPC {
 
             $output = @{}
             foreach ($deviceId in $batchResult.Keys) {
-                $name = $deviceIdToName[$deviceId] ?? $deviceId
+                $name = Get-IPCFirstValue -InputObject $deviceIdToName -Names @($deviceId) -Default $deviceId
                 $apps = @($batchResult[$deviceId])
 
                 if ($Filter) {
