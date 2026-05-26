@@ -1,6 +1,6 @@
 @{
     RootModule        = 'IPC.psm1'
-    ModuleVersion     = '1.0.1'
+    ModuleVersion     = '1.1.0'
     GUID              = 'b3f7c8a1-4e2d-4f9b-a6c1-8d5e3f2a7b90'
     Author            = 'schenardie'
     CompanyName       = 'schenardie'
