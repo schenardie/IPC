@@ -35,7 +35,7 @@
             Tags        = @('Intune', 'Graph', 'Inventory', 'DeviceManagement', 'IPC', 'MicrosoftGraph')
             LicenseUri  = 'https://github.com/schenardie/IPC/blob/main/LICENSE'
             ProjectUri  = 'https://github.com/schenardie/IPC'
-            ReleaseNotes = 'v1.0.1: Added LocalAiAgent inventory support and PowerShell 5.1 compatibility alongside PowerShell 7.'
+            ReleaseNotes = 'v1.1.0: Added LocalAiAgent inventory support and PowerShell 5.1 compatibility alongside PowerShell 7.'
         }
     }
 }
