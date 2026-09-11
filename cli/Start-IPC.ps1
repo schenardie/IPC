@@ -167,6 +167,12 @@ function Resolve-MenuInventoryCategory {
         }
         return 'LocalAiAgent'
     }
+    if ($normalized -in @('registrykeyproperties', 'registrykey', 'registrykeys', 'registry', 'regkey', 'regkeys')) {
+        foreach ($available in $AvailableCategories) {
+            if ($available -and $available -ieq 'RegistryKeyProperties') { return $available }
+        }
+        return 'RegistryKeyProperties'
+    }
 
     foreach ($available in $AvailableCategories) {
         if (-not $available) { continue }
