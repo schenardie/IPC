@@ -184,4 +184,34 @@ Describe 'Invoke-IPC' {
         $script:CapturedCategories | Should -Contain 'LocalAiAgent'
         $result.Categories | Should -Contain 'LocalAiAgent'
     }
+
+    It 'normalizes Registry Key Properties category aliases for hardware inventory' {
+        Mock Get-IPCManagedDevices -ModuleName IPC {
+            @([pscustomobject]@{
+                id              = 'device-1'
+                deviceName      = 'computer1'
+                operatingSystem = 'Windows'
+                complianceState = 'compliant'
+            })
+        }
+        Mock Get-IPCDeviceInventoryCategories -ModuleName IPC {
+            @([pscustomobject]@{ id = 'RegistryKeyProperties' })
+        }
+        Mock Get-IPCInventoryBatch -ModuleName IPC {
+            param([string[]]$DeviceIds, [string[]]$Categories)
+            $script:CapturedCategories = $Categories
+            @{
+                'device-1' = @{
+                    'RegistryKeyProperties' = @(
+                        @{ 'Instance Name' = 'HKLM\Software\Contoso'; 'Value Name' = 'Enabled'; 'Value Data' = '1' }
+                    )
+                }
+            }
+        }
+
+        $result = Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'registry keys'
+
+        $script:CapturedCategories | Should -Contain 'RegistryKeyProperties'
+        $result.Categories | Should -Contain 'RegistryKeyProperties'
+    }
 }

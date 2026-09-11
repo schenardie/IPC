@@ -246,7 +246,7 @@ Option **2** lets you:
 
 1. Search for a Windows device by partial name (or paste a device GUID directly).
 2. Choose one device or all matching devices.
-3. Pick from the inventory categories available for that device (e.g. `battery`, `diskDrive`, `processor`, `operatingSystem`, `LocalAiAgent`).
+3. Pick from the inventory categories available for that device (e.g. `battery`, `diskDrive`, `processor`, `operatingSystem`, `LocalAiAgent`, `RegistryKeyProperties`).
 4. Select individual categories or `all`.
 
 Results are printed as JSON and can optionally be copied to the clipboard.
@@ -295,6 +295,10 @@ $battery | ConvertTo-Json -Depth 10
 # Local AI agent inventory (alias forms like 'local ai agents' also work)
 $localAi = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'LocalAiAgent'
 $localAi | ConvertTo-Json -Depth 10
+
+# Registry key/value inventory (alias forms like 'registry' or 'registry keys' also work)
+$registryKeys = Get-IPCDeviceInventory -DeviceId 'your-device-guid' -Category 'RegistryKeyProperties'
+$registryKeys | ConvertTo-Json -Depth 10
 
 # Get software (application) inventory
 $apps = Get-IPCSoftwareInventory -DeviceId 'your-device-guid'

@@ -1,6 +1,6 @@
 @{
     RootModule        = 'IPC.psm1'
-    ModuleVersion     = '1.1.0'
+    ModuleVersion     = '1.2.0'
     GUID              = 'b3f7c8a1-4e2d-4f9b-a6c1-8d5e3f2a7b90'
     Author            = 'schenardie'
     CompanyName       = 'schenardie'
@@ -35,7 +35,7 @@
             Tags        = @('Intune', 'Graph', 'Inventory', 'DeviceManagement', 'IPC', 'MicrosoftGraph')
             LicenseUri  = 'https://github.com/schenardie/IPC/blob/main/LICENSE'
             ProjectUri  = 'https://github.com/schenardie/IPC'
-            ReleaseNotes = 'v1.1.0: Added LocalAiAgent inventory support and PowerShell 5.1 compatibility alongside PowerShell 7.'
+            ReleaseNotes = 'v1.2.0: Added RegistryKeyProperties inventory category support (registry key/value inventory instances), with alias forms like ''registry'' and ''registry keys''.'
         }
     }
 }

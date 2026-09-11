@@ -24,8 +24,14 @@ $script:MAX_BATCH_RETRIES = 5
 $script:DEFAULT_RETRY_AFTER = 30
 $script:IPC_NOT_FOUND = New-Object psobject
 $script:INVENTORY_CATEGORY_ALIASES = @{
-    'localaiagent'  = 'LocalAiAgent'
-    'localaiagents' = 'LocalAiAgent'
+    'localaiagent'          = 'LocalAiAgent'
+    'localaiagents'         = 'LocalAiAgent'
+    'registrykeyproperties' = 'RegistryKeyProperties'
+    'registrykey'           = 'RegistryKeyProperties'
+    'registrykeys'          = 'RegistryKeyProperties'
+    'registry'              = 'RegistryKeyProperties'
+    'regkey'                = 'RegistryKeyProperties'
+    'regkeys'               = 'RegistryKeyProperties'
 }
 
 function Test-IPCIsWindows {

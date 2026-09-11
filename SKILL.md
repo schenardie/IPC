@@ -56,7 +56,7 @@ pwsh -Command "if (-not (Get-Module -ListAvailable -Name IPC)) { Install-Module 
 | DeviceName  | string   | No*      | Partial device name to search (e.g. `'LAPTOP'`, `'computer1'`) |
 | DeviceId    | string   | No*      | Exact Intune device GUID |
 | AllDevices  | switch   | No*      | Target all Windows managed devices |
-| Category    | string[] | No       | Hardware inventory categories (e.g. `'bios'`, `'battery'`, `'LocalAiAgent'`). Use `'all'` for everything. Only for `HardwareInventory`. Alias forms like `'local ai agents'` are also accepted. |
+| Category    | string[] | No       | Hardware inventory categories (e.g. `'bios'`, `'battery'`, `'LocalAiAgent'`, `'RegistryKeyProperties'`). Use `'all'` for everything. Only for `HardwareInventory`. Alias forms like `'local ai agents'` or `'registry keys'` are also accepted. |
 | Filter      | string   | No       | Text filter applied to results (case-insensitive match on any property value) |
 | Top         | int      | No       | Max devices to return (default 100) |
 
@@ -101,6 +101,7 @@ For multi-device results, `Results` is keyed by device name.
 | `systemEnclosure`  | Chassis type, serial number |
 | `windowsQfe`       | Installed Windows updates |
 | `LocalAiAgent`     | Local AI agent inventory instances |
+| `RegistryKeyProperties` | Registry key/value inventory instances |
 
 > **Note:** Available categories vary by device. Use `ListCategories` to discover what's available for a specific device.
 
@@ -118,6 +119,7 @@ For multi-device results, `Results` is keyed by device name.
 | "Battery health for device abc-123" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceId 'abc-123' -Category 'battery'` |
 | "Show processor and memory for all devices" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -AllDevices -Category 'processor','memory'` |
 | "Show Local AI agent inventory for computer1" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'LocalAiAgent'` |
+| "Show registry key inventory for computer1" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'RegistryKeyProperties'` |
 | "What inventory categories exist for computer1?" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action ListCategories -DeviceName 'computer1'` |
 | "Find Chrome in software inventory across all devices" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action SoftwareInventory -AllDevices -Filter 'Chrome'` |
 | "Show all hardware info for computer1" | `Import-Module ./IPC/IPC.psm1; Invoke-IPC -Action HardwareInventory -DeviceName 'computer1' -Category 'all'` |
